@@ -1,0 +1,24 @@
+###Register a user
+POST  http://127.0.0.1:8000/api/accounts/register/
+content-Type: application/json
+
+{
+  "email": "user1@example.com",
+  "name": "User One",
+  "phone": "0700123456",
+  "location": "Kampala",
+  "country": "Uganda",
+  "password": "testpassword123",
+  "role": "user"
+}
+
+
+### Login to get tokens
+POST http://127.0.0.1:8000/api/accounts/login/
+Content-Type: application/json
+
+{
+  "email": "user1@example.com",
+  "password": "testpassword123"
+}
+
