@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -95,7 +96,7 @@ DATABASES = {
         'NAME': 'CBMTV',
         'USER': 'postgres',
         'PASSWORD': 'postgre',
-        'HOST': 'localhost',  # or your VPS IP when deployed
+        'HOST': 'localhost',
         'PORT': '5432',
     }
 }

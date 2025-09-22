@@ -42,6 +42,7 @@ class User (AbstractBaseUser, PermissionsMixin):
     ROLE_CHOICES = (
         ('user', 'User'),
         ('admin', 'Admin'),
+        ('internal_admin', 'Internal Admin'),
     )
 
     email = models.EmailField(unique=True)
@@ -49,7 +50,7 @@ class User (AbstractBaseUser, PermissionsMixin):
     phone = models.CharField(max_length=20)
     location = models.CharField(max_length=100)
     country = models.CharField(max_length=100)
-    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='user')
+    role = models.CharField(max_length=15, choices=ROLE_CHOICES, default='user')
 
 
     is_active = models.BooleanField(default=True)
@@ -66,8 +67,8 @@ class User (AbstractBaseUser, PermissionsMixin):
 class RoleChangeLog(models.Model):
     changed_by = models.ForeignKey(User, on_delete=models.CASCADE,related_name="role_changes_made")
     changed_user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="role_changes_recieved")
-    old_role = models.CharField(max_length=10)
-    new_role = models.CharField(max_length=10)
+    old_role = models.CharField(max_length=15)
+    new_role = models.CharField(max_length=15)
     timestamp = models.DateTimeField(auto_now_add = True)
 
     def __str__(self):

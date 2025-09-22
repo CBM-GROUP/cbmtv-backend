@@ -14,4 +14,16 @@ class RegisterSerializer(serializers.ModelSerializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model =User
-        fields = ['id', 'email', 'name', 'phone', 'location', 'country', 'role']
+        fields = ['id', 'email', 'name', 'phone', 'location', 'country', 'role', 'is_staff', 'is_superuser']
+
+
+class UserSerializer(serializers.ModelSerializer):
+    username = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'role', 'is_staff', 'is_superuser']
+
+    def get_username(self, obj):
+        # Map username to display name field in our model
+        return getattr(obj, 'name', obj.email)
