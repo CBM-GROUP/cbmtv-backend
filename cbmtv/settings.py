@@ -27,7 +27,10 @@ SECRET_KEY = 'django-insecure-l-lxx-*u2my&r*8p66%m*ppf+shl8s_@cz3(njf7xabcj2dg)(
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    "cbmtv-backend-production.up.railway.app",
+    "127.0.0.1",
+]
 
 
 # Application definition
