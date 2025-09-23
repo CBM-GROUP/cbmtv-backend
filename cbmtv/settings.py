@@ -31,6 +31,13 @@ ALLOWED_HOSTS = [
     "cbmtv-backend-production.up.railway.app",
     "127.0.0.1",
 ]
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:8080',  # You can also add localhost if needed for local testing
+    ' https://cbmtv-ui.vercel.app',
+    'http://localhost:8000',
+    'http://localhost:3000',
+
+]
 
 
 # Application definition
