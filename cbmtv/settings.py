@@ -36,6 +36,8 @@ CSRF_TRUSTED_ORIGINS = [
     ' https://cbmtv-ui.vercel.app',
     'http://localhost:8000',
     'http://localhost:3000',
+   ' http://localhost:3000 ', 
+   'http://localhost:5137'
 
 ]
 
@@ -100,17 +102,26 @@ WSGI_APPLICATION = 'cbmtv.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'CBMTV',
+#         'USER': 'postgres',
+#         'PASSWORD': 'postgre',
+#         'HOST': 'localhost',
+#         'PORT': '5432',
+#     }
+# }
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'CBMTV',
+        'NAME': 'railway',
         'USER': 'postgres',
-        'PASSWORD': 'postgre',
-        'HOST': 'localhost',
-        'PORT': '5432',
+        'PASSWORD': 'ZSpywhSyZfqMjyjinvEZAxpHrzXALoRZ',
+        'HOST': 'shuttle.proxy.rlwy.net',  # or your VPS IP when deployed
+        'PORT': '32239',
     }
 }
-
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 

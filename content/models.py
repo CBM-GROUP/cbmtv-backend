@@ -11,6 +11,12 @@ class Content(models.Model):
         ('documentary', 'Documentary'),
         ('animations', 'Animations'),
     ]
+    STATUS_TYPES = [
+        ('preview', 'Preview'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('comingsoon ','Comingsoon')
+    ]
 
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
@@ -23,7 +29,8 @@ class Content(models.Model):
     director = models.CharField(max_length=200, blank=True, null=True)
     writer = models.CharField(max_length=200, blank=True, null=True)
     genre = models.CharField(max_length=100, blank=True, null=True)
-
+    country = models.CharField(max_length=100, blank=True, null=True)
+    status = models.CharField(max_length=100, blank=True, null=True, choices=STATUS_TYPES)
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="content")
 
     created_at = models.DateTimeField(auto_now_add=True)
