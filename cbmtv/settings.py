@@ -33,14 +33,20 @@ ALLOWED_HOSTS = [
 ]
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:8080',  # You can also add localhost if needed for local testing
-    ' https://cbmtv-ui.vercel.app',
+    'https://cbmtv-ui.vercel.app',
     'http://localhost:8000',
-    'http://localhost:3000',
-   ' http://localhost:3000 ', 
-   'http://localhost:5137'
+    'http://localhost:3000', 
+    'http://localhost:5137'
 
 ]
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:8080',  # You can also add localhost if needed for local testing
+    'https://cbmtv-ui.vercel.app',
+    'http://localhost:8000',
+    'http://localhost:3000',
+    'http://localhost:5137'
 
+]
 
 # Application definition
 
@@ -59,7 +65,7 @@ INSTALLED_APPS = [
     'corsheaders',
 ]
 
-# CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
 AUTH_USER_MODEL = 'accounts.User'
@@ -73,14 +79,14 @@ REST_FRAMEWORK = {
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
-    'django.middleware.common.CommonMiddleware',
+    
 
 ]
 
