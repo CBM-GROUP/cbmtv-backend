@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Content, Season, Episode, contentadverts
+from .models import Content, Season, Episode, contentadverts, MiniSeries
 
 class ContentSerializer(serializers.ModelSerializer):
     class Meta:
@@ -33,3 +33,15 @@ class ContentAdvertSerializer(serializers.ModelSerializer):
     class Meta:
         model = contentadverts
         fields = '__all__'
+
+
+class MiniSeriesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MiniSeries
+        fields = '__all__'
+
+    def validate(self, attrs):
+        content = attrs.get('content') or getattr(self.instance, 'content', None)
+        if content and content.content_type != 'miniseries':
+            raise serializers.ValidationError('MiniSeries can only be created for content of type "miniseries".')
+        return attrs

@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
     ContentListCreateView, ContentDetailView, EpisodeDetailView, EpisodeListCreateView, MovieListView, SeasonDetailView, SeasonListCreateView, content_ids,
-    ContentAdvertListCreateView, ContentAdvertDetailView
+    ContentAdvertListCreateView, ContentAdvertDetailView, MiniSeriesListCreateView, MiniSeriesDetailView
     )
 
 urlpatterns = [
@@ -21,5 +21,9 @@ urlpatterns = [
     # Adverts
     path('adverts/', ContentAdvertListCreateView.as_view(), name='advert-list-create'),
     path('adverts/<int:pk>/', ContentAdvertDetailView.as_view(), name='advert-detail'),
+
+    # MiniSeries
+    path('miniseries/', MiniSeriesListCreateView.as_view(), name='miniseries-list-create'),
+    path('miniseries/<int:pk>/', MiniSeriesDetailView.as_view(), name='miniseries-detail'),
 
 ]

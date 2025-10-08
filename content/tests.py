@@ -2,7 +2,7 @@ from django.urls import reverse
 from rest_framework.test import APITestCase, APIClient
 from rest_framework import status
 from channel.models import Channel
-from .models import Content
+from .models import Content, MiniSeries
 from accounts.models import User
 
 
@@ -51,8 +51,16 @@ class ContentUpdatePermissionsTests(APITestCase):
             channel=self.channel,
         )
 
+        self.miniseries_parent = Content.objects.create(
+            title="Sample MiniSeries Container",
+            description="Desc",
+            content_type="miniseries",
+            channel=self.channel,
+        )
+
         # Base URLs (content app likely included under /api/content/ by project urls)
         self.base_url = "/api/content/"
+        self.miniseries_url = f"{self.base_url}miniseries/"
 
     def test_admin_can_put_movie(self):
         self.client.force_authenticate(user=self.admin_user)
@@ -111,3 +119,67 @@ class ContentUpdatePermissionsTests(APITestCase):
         self.assertEqual(response.data["director"], "Visible Director")
         self.assertEqual(response.data["writer"], "Visible Writer")
         self.assertEqual(response.data["genre"], "Sci-Fi")
+
+    def test_miniseries_create_requires_correct_content_type(self):
+        self.client.force_authenticate(user=self.admin_user)
+        # Attempt to create under a non-miniseries content (movie) should fail
+        payload = {
+            "content": self.movie.id,
+            "title": "Mini Ep 1",
+            "miniseries_no": 1,
+            "streaming_link": "https://example.com/m1.m3u8",
+            "duration": "00:20:00",
+            "thumbnail": "https://example.com/t1.jpg"
+        }
+        response = self.client.post(self.miniseries_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Create under correct content type should pass
+        payload["content"] = self.miniseries_parent.id
+        response = self.client.post(self.miniseries_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(MiniSeries.objects.count(), 1)
+
+    def test_miniseries_update_and_delete(self):
+        self.client.force_authenticate(user=self.admin_user)
+        # Create valid miniseries
+        ms = MiniSeries.objects.create(
+            content=self.miniseries_parent,
+            title="Mini Ep 1",
+            miniseries_no=1,
+            streaming_link="https://example.com/m1.m3u8",
+            duration="00:20:00",
+            thumbnail="https://example.com/t1.jpg",
+        )
+
+        # Update (PATCH)
+        detail_url = f"{self.miniseries_url}{ms.id}/"
+        patch_payload = {"title": "Mini Ep 1 - Updated"}
+        response = self.client.patch(detail_url, patch_payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ms.refresh_from_db()
+        self.assertEqual(ms.title, "Mini Ep 1 - Updated")
+
+        # Delete
+        response = self.client.delete(detail_url)
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(MiniSeries.objects.count(), 0)
+
+    def test_miniseries_filter_by_content(self):
+        self.client.force_authenticate(user=self.admin_user)
+        # Create two miniseries under same content
+        MiniSeries.objects.create(content=self.miniseries_parent, title="A", miniseries_no=1)
+        MiniSeries.objects.create(content=self.miniseries_parent, title="B", miniseries_no=2)
+
+        # And one under a different content container
+        other_parent = Content.objects.create(
+            title="Other Mini Container",
+            content_type="miniseries",
+            channel=self.channel,
+        )
+        MiniSeries.objects.create(content=other_parent, title="C", miniseries_no=1)
+
+        # Filter
+        response = self.client.get(f"{self.miniseries_url}?content={self.miniseries_parent.id}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)

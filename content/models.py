@@ -7,6 +7,7 @@ class Content(models.Model):
         ('movie', 'Movie'),
         ('music', 'Music'),
         ('series', 'Series'),
+        ('miniseries', 'Miniseries'),
         ('original', 'Original'),
         ('documentary', 'Documentary'),
         ('animations', 'Animations'),
@@ -79,3 +80,14 @@ class contentadverts(models.Model):
     def __str__(self):
         return f"{self.advert_type}"
 
+
+class MiniSeries(models.Model):
+    content = models.ForeignKey(Content, on_delete=models.CASCADE, related_name="miniseries")
+    title = models.CharField(max_length=200)
+    miniseries_no = models.PositiveIntegerField()
+    streaming_link = models.URLField(blank=True, null=True)
+    duration = models.DurationField(blank=True, null=True)
+    thumbnail = models.URLField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.content.title} - Miniseries {self.miniseries_no}: {self.title}"

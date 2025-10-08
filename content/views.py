@@ -1,6 +1,6 @@
 from rest_framework import viewsets
-from .models import Content, Season, Episode, contentadverts
-from .serializers import ContentSerializer, SeasonSerializer, EpisodeSerializer, ContentAdvertSerializer
+from .models import Content, Season, Episode, contentadverts, MiniSeries
+from .serializers import ContentSerializer, SeasonSerializer, EpisodeSerializer, ContentAdvertSerializer, MiniSeriesSerializer
 from rest_framework import generics
 from rest_framework import permissions
 from rest_framework.response import Response
@@ -54,6 +54,17 @@ def content_ids(request):
 class ContentListCreateView(generics.ListCreateAPIView):
     queryset = Content.objects.all()
     serializer_class = ContentSerializer
+    
+    def get_queryset(self):
+        channel_id = self.request.query_params.get('channel')
+        if channel_id:
+            # Be tolerant to trailing slashes like ?channel=5/
+            try:
+                cleaned_id = int(str(channel_id).strip('/'))
+                return Content.objects.filter(channel_id=cleaned_id)
+            except (TypeError, ValueError):
+                return Content.objects.none()
+        return Content.objects.all()
     
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
@@ -162,6 +173,38 @@ class ContentAdvertListCreateView(generics.ListCreateAPIView):
 class ContentAdvertDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = contentadverts.objects.all()
     serializer_class = ContentAdvertSerializer
+
+    def get_permissions(self):
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [permissions.AllowAny()]
+        return [permissions.IsAdminUser()]
+
+
+class MiniSeriesListCreateView(generics.ListCreateAPIView):
+    queryset = MiniSeries.objects.all()
+    serializer_class = MiniSeriesSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        content_id = self.request.query_params.get('content')
+        if content_id:
+            try:
+                cleaned_id = int(str(content_id).strip('/'))
+                return MiniSeries.objects.filter(content_id=cleaned_id)
+            except (TypeError, ValueError):
+                return MiniSeries.objects.none()
+        return MiniSeries.objects.all()
+
+    def get_permissions(self):
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [permissions.AllowAny()]
+        return [permissions.IsAdminUser()]
+
+
+class MiniSeriesDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = MiniSeries.objects.all()
+    serializer_class = MiniSeriesSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
