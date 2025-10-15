@@ -9,6 +9,6 @@ class ChannelViewSet(viewsets.ModelViewSet):
     serializer_class = ChannelSerializer
 
     def get_permissions(self):
-        if self.request.method in ('GET', 'POST',   'HEAD', 'OPTIONS'):
-            return [permissions.IsAuthenticated()]
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [permissions.AllowAny()]
         return [permissions.IsAdminUser()]
