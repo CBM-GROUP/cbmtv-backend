@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from .serializers import RegisterSerializer, UserProfileSerializer, UserSerializer
+from .serializers import RegisterSerializer, UserProfileSerializer, UserSerializer, GoogleDirectAuthSerializer
 from .models import User, RoleChangeLog 
 from rest_framework import generics, permissions 
 from rest_framework .views import APIView
@@ -7,6 +7,7 @@ from rest_framework .response import Response
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAdminUser
+from rest_framework_simplejwt.tokens import RefreshToken
 
 # Create your views here.
 class RegisterView(generics.CreateAPIView):
@@ -80,3 +81,47 @@ def ListUsersView(request):
     users = User.objects.all()
     serializer = UserProfileSerializer(users, many=True)
     return Response(serializer.data)
+
+
+class GoogleDirectLoginView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = GoogleDirectAuthSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        name = serializer.validated_data.get('name') or ''
+        email = serializer.validated_data['email']
+        google_id = serializer.validated_data['google_id']
+
+        # Find or create user by email
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                'name': name or email.split('@')[0],
+                'phone': '',
+                'location': '',
+                'country': '',
+                'role': 'user',
+                'auth_provider': 'google',
+            }
+        )
+
+        # Ensure provider is google
+        if user.auth_provider != 'google':
+            user.auth_provider = 'google'
+            user.save(update_fields=['auth_provider'])
+
+        # Issue JWT tokens using SimpleJWT
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+            'login': 'register' if created else 'login',
+            'user': {
+                'id': user.id,
+                'name': user.name,
+                'email': user.email,
+                'role': user.role,
+                'auth_provider': user.auth_provider,
+            },
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)

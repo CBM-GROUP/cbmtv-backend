@@ -44,13 +44,18 @@ class User (AbstractBaseUser, PermissionsMixin):
         ('admin', 'Admin'),
         ('internal_admin', 'Internal Admin'),
     )
+    AUTH_PROVIDER_CHOICES = (
+        ('local', 'Local'),
+        ('google', 'Google'),
+    )
 
     email = models.EmailField(unique=True)
     name = models.CharField(max_length=100)
-    phone = models.CharField(max_length=20)
-    location = models.CharField(max_length=100)
-    country = models.CharField(max_length=100)
+    phone = models.CharField(max_length=20,blank=True, null=True)
+    location = models.CharField(max_length=100,blank=True, null=True)
+    country = models.CharField(max_length=100,blank=True, null=True)
     role = models.CharField(max_length=15, choices=ROLE_CHOICES, default='user')
+    # auth_provider = models.CharField(max_length=20, choices=AUTH_PROVIDER_CHOICES, default='local')
 
 
     is_active = models.BooleanField(default=True)
