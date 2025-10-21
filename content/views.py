@@ -7,7 +7,56 @@ from rest_framework.response import Response
 from rest_framework.decorators import api_view
 from django.http import JsonResponse
 from django.db.models import Q
-# Create your views here.
+import os
+import meilisearch
+#  Initialize Meilisearch client
+MEILISEARCH_URL = os.getenv('MEILISEARCH_URL')
+MASTER_KEY = os.getenv('MASTER_KEY')
+client = meilisearch.Client(MEILISEARCH_URL, MASTER_KEY)
+index = client.index('content')
+
+
+@api_view(['GET'])
+def search_view(request):
+    """
+    API to fetch all Content objects from the database and index them to Meilisearch.
+    """
+    try:
+        try:
+            # Delete existing index (optional)
+            client.index('content').delete()
+            return search_content(request)
+        except Exception:
+            # If deletion fails, still index content
+            return search_content(request)
+    except Exception as e:
+        return JsonResponse({
+            'status': 'error', 
+            'message': str(e)
+        }, status=500)
+
+
+def search_content(request):
+    # Fetch all content from database
+    contents = Content.objects.all()
+
+    # Prepare documents for Meilisearch
+    documents = []
+    for content in contents:
+        documents.append({
+            'id': content.id,
+            'title': content.title,
+            # If you store genres as a ManyToManyField
+            'genres': [genre.name for genre in content.genres.all()] if hasattr(content, 'genres') else []
+        })
+
+    # Add documents to Meilisearch
+    index.add_documents(documents)
+
+    return JsonResponse({
+        'status': 'success',
+        'message': f'Indexed {len(documents)} documents to Meilisearch'
+    })
 
 @api_view(['GET'])
 def content_ids(request):
@@ -210,3 +259,4 @@ class MiniSeriesDetailView(generics.RetrieveUpdateDestroyAPIView):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
         return [permissions.IsAdminUser()]
+

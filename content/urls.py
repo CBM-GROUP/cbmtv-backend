@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
     ContentListCreateView, ContentDetailView, EpisodeDetailView, EpisodeListCreateView, MovieListView, SeasonDetailView, SeasonListCreateView, content_ids,
-    ContentAdvertListCreateView, ContentAdvertDetailView, MiniSeriesListCreateView, MiniSeriesDetailView
+    ContentAdvertListCreateView, ContentAdvertDetailView, MiniSeriesListCreateView, MiniSeriesDetailView,search_view
     )
 
 urlpatterns = [
@@ -25,5 +25,8 @@ urlpatterns = [
     # MiniSeries
     path('miniseries/', MiniSeriesListCreateView.as_view(), name='miniseries-list-create'),
     path('miniseries/<int:pk>/', MiniSeriesDetailView.as_view(), name='miniseries-detail'),
+
+    #SEARCH
+    path('search/', search_view, name='search'),
 
 ]
