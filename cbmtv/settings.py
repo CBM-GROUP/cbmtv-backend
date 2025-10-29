@@ -150,9 +150,9 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'railway',
         'USER': 'postgres',
-        'PASSWORD': 'ZSpywhSyZfqMjyjinvEZAxpHrzXALoRZ',
-        'HOST': 'shuttle.proxy.rlwy.net',  # or your VPS IP when deployed
-        'PORT': '32239',
+        'PASSWORD': 'zVStbeUMdBAdvGPFJmpudTQoMovikvOr',
+        'HOST': 'caboose.proxy.rlwy.net',  # or your VPS IP when deployed
+        'PORT': '23469',
     }
 }
 # # Password validation
