@@ -146,14 +146,13 @@ CORS_ALLOW_HEADERS = [
 #     }
 # }
 DATABASES = {
-
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'railway',
         'USER': 'postgres',
         'PASSWORD': 'zVStbeUMdBAdvGPFJmpudTQoMovikvOr',
         'HOST': 'caboose.proxy.rlwy.net',  # or your VPS IP when deployed
-        'PORT': '5432',
+        'PORT': '23469',
     }
 }
 # # Password validation
