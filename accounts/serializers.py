@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import User
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -39,3 +40,29 @@ class UserSerializer(serializers.ModelSerializer):
     def get_username(self, obj):
         # Map username to display name field in our model
         return getattr(obj, 'name', obj.email)
+
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        user: User = self.user
+        # Attach user info alongside tokens
+        image_url = None
+        try:
+            if getattr(user, 'image', None):
+                # Prefer URL if available; fallback to string path
+                image_field = user.image
+                image_url = getattr(image_field, 'url', None) or str(image_field)
+        except Exception:
+            image_url = None
+
+        data['user'] = {
+            'id': user.id,
+            'email': user.email,
+            'name': getattr(user, 'name', ''),
+            'phone': getattr(user, 'phone', ''),
+            'location': getattr(user, 'location', ''),
+            'country': getattr(user, 'country', ''),
+            'image': image_url,
+        }
+        return data

@@ -1,5 +1,11 @@
 from django.shortcuts import render
-from .serializers import RegisterSerializer, UserProfileSerializer, UserSerializer, GoogleDirectAuthSerializer
+from .serializers import (
+    RegisterSerializer,
+    UserProfileSerializer,
+    UserSerializer,
+    GoogleDirectAuthSerializer,
+    CustomTokenObtainPairSerializer,
+)
 from .models import User, RoleChangeLog 
 from rest_framework import generics, permissions 
 from rest_framework .views import APIView
@@ -8,6 +14,8 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAdminUser
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework import parsers
 
 # Create your views here.
 class RegisterView(generics.CreateAPIView):
@@ -19,6 +27,71 @@ class RegisterView(generics.CreateAPIView):
 def profile(request):
     serializer = UserSerializer(request.user)
     return Response(serializer.data)
+
+
+class UserUpdateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [parsers.JSONParser, parsers.FormParser, parsers.MultiPartParser]
+
+    def patch(self, request, pk):
+        return self._update(request, pk, partial=True)
+
+    def put(self, request, pk):
+        return self._update(request, pk, partial=False)
+
+    def _update(self, request, pk, partial: bool):
+        # Fetch target user
+        try:
+            target_user = User.objects.get(pk=pk)
+        except User.DoesNotExist:
+            return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Allow any authenticated user to edit profile fields by user id
+        data = request.data.copy()
+        allowed_fields = {"name", "phone", "location", "country", "image", "email"}
+        data = {k: v for k, v in data.items() if k in allowed_fields}
+
+        serializer = UserProfileSerializer(target_user, data=data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        return self._change_password(request, pk)
+
+    def patch(self, request, pk):
+        return self._change_password(request, pk)
+
+    def _change_password(self, request, pk):
+        try:
+            target_user = User.objects.get(pk=pk)
+        except User.DoesNotExist:
+            return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        current_password = request.data.get('current_password', '')
+        new_password = request.data.get('new_password', '')
+        confirm_password = request.data.get('confirm_password', '')
+
+        if not current_password or not new_password or not confirm_password:
+            return Response({"detail": "current_password, new_password and confirm_password are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not target_user.check_password(current_password):
+            return Response({"detail": "Current password is incorrect"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if new_password != confirm_password:
+            return Response({"detail": "New password and confirm password do not match"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if current_password == new_password:
+            return Response({"detail": "New password must be different from current password"}, status=status.HTTP_400_BAD_REQUEST)
+
+        target_user.set_password(new_password)
+        target_user.save(update_fields=['password'])
+
+        return Response({"detail": "Password updated successfully"}, status=status.HTTP_200_OK)
 
 
 class AssignAdminRoleView(APIView):
@@ -125,3 +198,7 @@ class GoogleDirectLoginView(APIView):
                 'auth_provider': user.auth_provider,
             },
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
