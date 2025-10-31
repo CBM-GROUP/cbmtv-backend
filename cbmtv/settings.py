@@ -135,26 +135,26 @@ CORS_ALLOW_HEADERS = [
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'CBMTV',
-        'USER': 'postgres',
-        'PASSWORD': 'postgre',
-        'HOST': 'localhost',
-        'PORT': '5432',
-    }
-}
 # DATABASES = {
 #     'default': {
 #         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': 'railway',
+#         'NAME': 'CBMTV',
 #         'USER': 'postgres',
-#         'PASSWORD': 'zVStbeUMdBAdvGPFJmpudTQoMovikvOr',
-#         'HOST': 'caboose.proxy.rlwy.net',  # or your VPS IP when deployed
-#         'PORT': '23469',
+#         'PASSWORD': 'postgre',
+#         'HOST': 'localhost',
+#         'PORT': '5432',
 #     }
 # }
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'railway',
+        'USER': 'postgres',
+        'PASSWORD': 'zVStbeUMdBAdvGPFJmpudTQoMovikvOr',
+        'HOST': 'caboose.proxy.rlwy.net',  # or your VPS IP when deployed
+        'PORT': '23469',
+    }
+}
 # # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
