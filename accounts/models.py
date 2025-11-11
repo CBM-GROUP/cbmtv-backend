@@ -58,7 +58,7 @@ class User (AbstractBaseUser, PermissionsMixin):
     phone = models.CharField(max_length=20,blank=True, null=True)
     location = models.CharField(max_length=100,blank=True, null=True)
     country = models.CharField(max_length=100,blank=True, null=True)
-    image = models.ImageField(max_length=255,blank=True, null=True)
+    image = models.URLField(max_length=255, blank=True, null=True)
     role = models.CharField(max_length=15, choices=ROLE_CHOICES, default='user')
     auth_provider = models.CharField(max_length=20, choices=AUTH_PROVIDER_CHOICES, default='local')
 

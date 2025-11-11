@@ -25,9 +25,11 @@ class GoogleDirectAuthSerializer(serializers.Serializer):
         return attrs
 
 class UserProfileSerializer(serializers.ModelSerializer):
+    image = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
     class Meta:
         model =User
-        fields = ['id', 'email', 'name', 'phone', 'location', 'country', 'role', 'auth_provider', 'is_staff', 'is_superuser']
+        fields = ['id', 'email', 'name', 'phone', 'location', 'country', 'image', 'role', 'auth_provider', 'is_staff', 'is_superuser']
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -35,7 +37,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'role', 'auth_provider', 'is_staff', 'is_superuser']
+        fields = ['id', 'username', 'email', 'name', 'phone', 'location', 'country', 'image', 'role', 'auth_provider', 'is_staff', 'is_superuser']
 
     def get_username(self, obj):
         # Map username to display name field in our model
@@ -46,15 +48,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
         user: User = self.user
-        # Attach user info alongside tokens
-        image_url = None
-        try:
-            if getattr(user, 'image', None):
-                # Prefer URL if available; fallback to string path
-                image_field = user.image
-                image_url = getattr(image_field, 'url', None) or str(image_field)
-        except Exception:
-            image_url = None
 
         data['user'] = {
             'id': user.id,
@@ -63,6 +56,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'phone': getattr(user, 'phone', ''),
             'location': getattr(user, 'location', ''),
             'country': getattr(user, 'country', ''),
-            'image': image_url,
+            'image': getattr(user, 'image', None),
         }
         return data
