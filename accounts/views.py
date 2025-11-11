@@ -186,16 +186,29 @@ class GoogleDirectLoginView(APIView):
 
         # Issue JWT tokens using SimpleJWT
         refresh = RefreshToken.for_user(user)
+        
+        # Get image URL similar to CustomTokenObtainPairSerializer
+        image_url = None
+        try:
+            if getattr(user, 'image', None):
+                # Prefer URL if available; fallback to string path
+                image_field = user.image
+                image_url = getattr(image_field, 'url', None) or str(image_field)
+        except Exception:
+            image_url = None
+        
         return Response({
             'refresh': str(refresh),
             'access': str(refresh.access_token),
             'login': 'register' if created else 'login',
             'user': {
                 'id': user.id,
-                'name': user.name,
                 'email': user.email,
-                'role': user.role,
-                'auth_provider': user.auth_provider,
+                'name': getattr(user, 'name', ''),
+                'phone': getattr(user, 'phone', ''),
+                'location': getattr(user, 'location', ''),
+                'country': getattr(user, 'country', ''),
+                'image': image_url,
             },
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
