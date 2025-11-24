@@ -4,6 +4,7 @@ FROM python:3.12-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV DJANGO_SETTINGS_MODULE=cbmtv_backend.settings.production
 
 # Set work directory
 WORKDIR /app
@@ -23,11 +24,11 @@ RUN pip install -r requirements.txt
 # Copy project
 COPY . /app/
 
-# Collect static files (optional)
-RUN python manage.py collectstatic --noinput
+# Create static directory
+RUN mkdir -p /app/staticfiles
 
-# Run migrations (optional)
-# RUN python manage.py migrate
+# Collect static files
+RUN python manage.py collectstatic --noinput
 
 # Expose port
 EXPOSE 8000
