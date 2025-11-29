@@ -158,11 +158,11 @@ CORS_ALLOW_HEADERS = [
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'railway',
-        'USER': 'postgres',
-        'PASSWORD': 'zVStbeUMdBAdvGPFJmpudTQoMovikvOr',
-        'HOST': 'caboose.proxy.rlwy.net',  # or your VPS IP when deployed
-        'PORT': '23469',
+        'NAME': 'cbmtv',
+        'USER': 'cbmtv',
+        'PASSWORD': 'cbmtvmedia10000000.',
+        'HOST': 'cbmtv-postgressdb-pqmhja',  # or your VPS IP when deployed
+        'PORT': '5432',
     }
 }
 # # Password validation
