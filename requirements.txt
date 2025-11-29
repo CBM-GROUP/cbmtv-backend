@@ -3,6 +3,7 @@ asgiref==3.8.1
 camel-converter==5.0.0
 certifi==2025.6.15
 charset-normalizer==3.4.2
+dj-database-url==3.0.1
 Django==5.2.3
 django-cors-headers==4.9.0
 django-stubs==5.2.1

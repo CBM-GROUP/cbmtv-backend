@@ -15,6 +15,7 @@ import os
 from django.conf import settings
 from django.conf.urls.static import static
 from dotenv import load_dotenv
+import dj_database_url
 
 load_dotenv()
 
@@ -156,14 +157,7 @@ CORS_ALLOW_HEADERS = [
 #     }
 # }
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'cbmtv',
-        'USER': 'cbmtv',
-        'PASSWORD': 'cbmtvmedia10000000.',
-        'HOST': 'cbmtv-postgressdb-pqmhja',  # or your VPS IP when deployed
-        'PORT': '5432',
-    }
+    "default": dj_database_url.parse(os.environ.get("DATABASE_URL"))
 }
 # # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
