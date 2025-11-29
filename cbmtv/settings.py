@@ -36,6 +36,9 @@ DEBUG = True
 ALLOWED_HOSTS = [
     "web-production-03b3b.up.railway.app",
     "127.0.0.1",
+    "api.cbmtv.online",
+    "backend.cbmtv.online"
+
 ]
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:8080',  # You can also add localhost if needed for local testing
@@ -43,6 +46,8 @@ CSRF_TRUSTED_ORIGINS = [
     'http://localhost:8000',
     'http://localhost:3000', 
     'http://localhost:5137'
+    'http://cbmtv.online',
+    'https://www.cbmtv.online',
 
 ]
 CORS_ALLOWED_ORIGINS = [
@@ -50,7 +55,9 @@ CORS_ALLOWED_ORIGINS = [
     'https://cbmtv-ui.vercel.app',
     'http://localhost:8000',
     'http://localhost:3000',
-    'http://localhost:5137'
+    'http://localhost:5137',
+     'http://cbmtv.online',
+    'https://www.cbmtv.online',
 
 ]
 
