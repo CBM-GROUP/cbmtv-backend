@@ -1,7 +1,3 @@
 venv/
 .env/
-<<<<<<< HEAD
 /.env
-=======
-/.env
->>>>>>> 2aec937 (Update Meilisearch URL and master key in .env; adjust .gitignore to exclude .env file)
