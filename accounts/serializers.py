@@ -4,13 +4,20 @@ from .models import User
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
+    image = serializers.URLField(required=False, allow_null=True, allow_blank=True)
 
     class Meta:
         model = User
-        fields = ['email', 'name','phone', 'location', 'country', 'password']
+        fields = ['email', 'name', 'phone', 'location', 'country', 'password', 'image']
 
-    def create (self, validated_data):
-        return User.objects.create_user(**validated_data, role='user')
+    def create(self, validated_data):
+        image = validated_data.pop('image', None)
+        user = User.objects.create_user(
+            **validated_data,
+            image=image,
+            role='user'
+        )
+        return user
 
 class GoogleDirectAuthSerializer(serializers.Serializer):
     name = serializers.CharField(allow_blank=True, required=False)
