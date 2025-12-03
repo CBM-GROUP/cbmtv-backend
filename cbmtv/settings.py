@@ -49,11 +49,14 @@ CSRF_TRUSTED_ORIGINS = [
     'http://localhost:5137'
     'http://cbmtv.online',
     'https://www.cbmtv.online',
+    'https://cbmtv-dashboard.vercel.app',
+
 
 ]
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:8080',  # You can also add localhost if needed for local testing
     'https://cbmtv-ui.vercel.app',
+    'https://cbmtv-dashboard.vercel.app',
     'http://localhost:8000',
     'http://localhost:3000',
     'http://localhost:5137',
