@@ -35,7 +35,6 @@ SECRET_KEY = 'django-insecure-l-lxx-*u2my&r*8p66%m*ppf+shl8s_@cz3(njf7xabcj2dg)(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 ALLOWED_HOSTS = [
-    "web-production-03b3b.up.railway.app",
     "127.0.0.1",
     "api.cbmtv.online",
     "backend.cbmtv.online"
@@ -49,11 +48,14 @@ CSRF_TRUSTED_ORIGINS = [
     'http://localhost:5137'
     'http://cbmtv.online',
     'https://www.cbmtv.online',
+    'https://cbmtv-dashboard.vercel.app',
+
 
 ]
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:8080',  # You can also add localhost if needed for local testing
     'https://cbmtv-ui.vercel.app',
+    'https://cbmtv-dashboard.vercel.app',
     'http://localhost:8000',
     'http://localhost:3000',
     'http://localhost:5137',
