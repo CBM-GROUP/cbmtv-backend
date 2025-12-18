@@ -77,6 +77,7 @@ INSTALLED_APPS = [
     'channel',
     'content',
     'corsheaders',
+    'common',
 ]
 
 CORS_ALLOW_ALL_ORIGINS = True

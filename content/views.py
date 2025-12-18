@@ -9,6 +9,7 @@ from django.http import JsonResponse
 from django.db.models import Q
 import os
 import meilisearch
+from common.pagination import StandardPagination
 #  Initialize Meilisearch client
 MEILISEARCH_URL = os.getenv('MEILISEARCH_URL')
 MASTER_KEY = os.getenv('MASTER_KEY')
@@ -103,6 +104,7 @@ def content_ids(request):
 class ContentListCreateView(generics.ListCreateAPIView):
     queryset = Content.objects.all()
     serializer_class = ContentSerializer
+    pagination_class = StandardPagination
     
     def get_queryset(self):
         channel_id = self.request.query_params.get('channel')
@@ -135,6 +137,7 @@ class ContentDetailView(generics.RetrieveUpdateDestroyAPIView):
 class MovieListView(generics.ListAPIView):
     queryset = Content.objects.filter(content_type='movie')
     serializer_class= ContentSerializer
+    pagination_class = StandardPagination
 
     def get_queryset(self):
         return Content.objects.filter(content_type='movie')
@@ -149,6 +152,7 @@ class SeasonListCreateView(generics.ListCreateAPIView):
     queryset = Season.objects.all()
     serializer_class = SeasonSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = StandardPagination
 
     def get_queryset(self):
         content_id = self.request.query_params.get('content')
@@ -179,7 +183,7 @@ class SeasonDetailView(generics.RetrieveUpdateDestroyAPIView):
 class EpisodeListCreateView(generics.ListCreateAPIView):
     serializer_class = EpisodeSerializer
     permission_classes = [permissions.IsAuthenticated]
-
+    pagination_class = StandardPagination
     def get_queryset(self):
         season_id = self.request.query_params.get('season')
         if season_id:
@@ -233,6 +237,7 @@ class MiniSeriesListCreateView(generics.ListCreateAPIView):
     queryset = MiniSeries.objects.all()
     serializer_class = MiniSeriesSerializer
     permission_classes = [permissions.IsAuthenticated]
+    
 
     def get_queryset(self):
         content_id = self.request.query_params.get('content')
