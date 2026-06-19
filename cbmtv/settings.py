@@ -12,12 +12,22 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os
-from django.conf import settings
-from django.conf.urls.static import static
 from dotenv import load_dotenv
 import dj_database_url
 
 load_dotenv()
+
+
+def env_bool(name, default=False):
+    return os.environ.get(name, str(default)).lower() in ("1", "true", "yes", "on")
+
+
+def env_list(name, default=None):
+    value = os.environ.get(name)
+    if not value:
+        return default or []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -30,39 +40,54 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-l-lxx-*u2my&r*8p66%m*ppf+shl8s_@cz3(njf7xabcj2dg)('
+SECRET_KEY = os.environ.get(
+    "SECRET_KEY",
+    "django-insecure-l-lxx-*u2my&r*8p66%m*ppf+shl8s_@cz3(njf7xabcj2dg)(",
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-ALLOWED_HOSTS = [
+DEBUG = env_bool("DEBUG", False)
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", False)
+
+ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", [
     "127.0.0.1",
+    "localhost",
     "api.cbmtv.online",
-    "backend.cbmtv.online"
+    "backend.cbmtv.online",
+    ".railway.app",
+    ".up.railway.app",
+])
 
-]
-CSRF_TRUSTED_ORIGINS = [
-    'http://localhost:8080',  # You can also add localhost if needed for local testing
-    'https://cbmtv-ui.vercel.app',
-    'http://localhost:8000',
-    'http://localhost:3000', 
-    'http://localhost:5137'
-    'http://cbmtv.online',
-    'https://www.cbmtv.online',
-    'https://cbmtv-dashboard.vercel.app',
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [
+    "http://localhost:8080",
+    "http://localhost:8000",
+    "http://localhost:3000",
+    "http://localhost:5137",
+    "http://cbmtv.online",
+    "https://cbmtv.online",
+    "https://www.cbmtv.online",
+    "https://cbmtv-ui.vercel.app",
+    "https://cbmtv-dashboard.vercel.app",
+    "https://api.cbmtv.online",
+    "https://backend.cbmtv.online",
+    "https://*.railway.app",
+    "https://*.up.railway.app",
+])
 
-
-]
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:8080',  # You can also add localhost if needed for local testing
-    'https://cbmtv-ui.vercel.app',
-    'https://cbmtv-dashboard.vercel.app',
-    'http://localhost:8000',
-    'http://localhost:3000',
-    'http://localhost:5137',
-     'http://cbmtv.online',
-    'https://www.cbmtv.online',
-
-]
+CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", [
+    "http://localhost:8080",
+    "http://localhost:8000",
+    "http://localhost:3000",
+    "http://localhost:5137",
+    "http://cbmtv.online",
+    "https://cbmtv.online",
+    "https://www.cbmtv.online",
+    "https://cbmtv-ui.vercel.app",
+    "https://cbmtv-dashboard.vercel.app",
+])
 
 # Application definition
 
@@ -82,7 +107,7 @@ INSTALLED_APPS = [
     'common',
 ]
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", False)
 CORS_ALLOW_CREDENTIALS = True
 
 AUTH_USER_MODEL = 'accounts.User'
@@ -96,6 +121,7 @@ REST_FRAMEWORK = {
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -160,7 +186,11 @@ CORS_ALLOW_HEADERS = [
 #     }
 # }
 DATABASES = {
-    "default": dj_database_url.parse(os.environ.get("DATABASE_URL"))
+    "default": dj_database_url.config(
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
 }
 # # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -196,7 +226,15 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
