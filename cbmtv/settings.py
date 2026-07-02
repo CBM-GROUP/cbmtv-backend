@@ -182,7 +182,7 @@ CORS_ALLOW_HEADERS = [
 #         'USER': 'postgres',
 #         'PASSWORD': 'postgre',
 #         'HOST': 'localhost',
-#         'PORT': '5432',
+#         'PORT': '5433',
 #     }
 # }
 DATABASES = {
