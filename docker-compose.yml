@@ -1,21 +1,52 @@
 services:
-  postgres:
-    image: postgres:16
-
-    container_name: cbmtv_postgres
-
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cbmtv-api:local
     restart: unless-stopped
-
+    env_file:
+      - path: .env
+        required: false
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-
+      DB_NAME: ${POSTGRES_DB:-cbmtv}
+      DB_USER: ${POSTGRES_USER:-cbmtv}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-cbmtv_local_password}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      SECRET_KEY: ${SECRET_KEY:-local-only-change-before-production}
+      DEBUG: ${DEBUG:-false}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-http://localhost:8001}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8001}
     ports:
-      - "5433:5432"
+      - "${APP_PORT:-8001}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8000/health/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cbmtv}
+      POSTGRES_USER: ${POSTGRES_USER:-cbmtv}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cbmtv_local_password}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres_data:

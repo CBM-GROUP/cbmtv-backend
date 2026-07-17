@@ -1,36 +1,36 @@
-# Use official Python image
-FROM python:3.12-slim
+# syntax=docker/dockerfile:1
+FROM python:3.12-slim AS runtime
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV DJANGO_SETTINGS_MODULE=cbmtv.settings
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    DJANGO_SETTINGS_MODULE=cbmtv.settings \
+    PORT=8000
 
-# Set work directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libpq-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y curl libpq5 \
+    && rm -rf /var/lib/apt/lists/* \
+    && addgroup --system django \
+    && adduser --system --ingroup django django
 
-# Install Python dependencies
-COPY requirements.txt /app/
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+COPY requirements.txt .
+RUN pip install --upgrade pip \
+    && pip install --requirement requirements.txt
 
-# Copy project
-COPY . /app/
+COPY --chown=django:django . .
+RUN chmod +x /app/docker/entrypoint.sh \
+    && mkdir -p /app/staticfiles \
+    && chown -R django:django /app/staticfiles
 
-# Create static directory
-RUN mkdir -p /app/staticfiles
+USER django
 
-# Expose port
 EXPOSE 8000
 
-# Run collectstatic, migrations, and start Gunicorn at runtime
-CMD python manage.py collectstatic --noinput && \
-    python manage.py migrate && \
-    gunicorn cbmtv.wsgi:application --bind 0.0.0.0:${PORT:-8000}
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl --fail --silent "http://127.0.0.1:${PORT}/health/" || exit 1
+
+ENTRYPOINT ["/app/docker/entrypoint.sh"]
+CMD ["gunicorn", "cbmtv.wsgi:application"]
