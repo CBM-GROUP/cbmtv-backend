@@ -178,17 +178,16 @@ CORS_ALLOW_HEADERS = [
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': 'CBMTV',
-#         'USER': 'postgres',
-#         'PASSWORD': 'postgre',
-#         'HOST': 'localhost',
-#         'PORT': '5433',
-#     }
-# }
-if os.environ.get("DB_NAME"):
+# Prefer an explicit DATABASE_URL if provided (e.g. by hosting platforms).
+if os.environ.get("DATABASE_URL"):
+    DATABASES = {
+        "default": dj_database_url.config(
+            conn_max_age=600,
+            conn_health_checks=True,
+        )
+    }
+# Fall back to explicit DB_* env vars for manually provided Postgres settings.
+elif os.environ.get("DB_NAME"):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -201,6 +200,7 @@ if os.environ.get("DB_NAME"):
             "CONN_HEALTH_CHECKS": True,
         }
     }
+# Default to a local sqlite file when no DB settings are provided.
 else:
     DATABASES = {
         "default": dj_database_url.config(
