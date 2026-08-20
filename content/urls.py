@@ -1,10 +1,12 @@
 from django.urls import path
 from .views import (
     ContentListCreateView, ContentDetailView, EpisodeDetailView, EpisodeListCreateView, MovieListView, SeasonDetailView, SeasonListCreateView, content_ids,
-    ContentAdvertListCreateView, ContentAdvertDetailView, MiniSeriesListCreateView, MiniSeriesDetailView,search_view
+    ContentAdvertListCreateView, ContentAdvertDetailView, MiniSeriesListCreateView, MiniSeriesDetailView,
+    MediaUploadTargetView, search_view
     )
 
 urlpatterns = [
+    path('media/upload-target/', MediaUploadTargetView.as_view(), name='media-upload-target'),
     path('', ContentListCreateView.as_view(), name='content-list-create'),
     path('<int:pk>/', ContentDetailView.as_view(), name='content-detail'),
     path('ids/', content_ids, name='content-ids'),

@@ -1,4 +1,5 @@
 annotated-types==0.7.0
+boto3==1.40.21
 asgiref==3.8.1
 camel-converter==5.0.0
 certifi==2025.6.15

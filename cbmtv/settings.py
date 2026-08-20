@@ -244,6 +244,24 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = '/static/'
+
+# Media storage is configured exclusively through backend environment variables.
+# Credentials must never be exposed through frontend NEXT_PUBLIC_* variables.
+MEDIA_STORAGE = {
+    'PROVIDER': os.environ.get('MEDIA_STORAGE_PROVIDER', 's3').lower(),
+    'CREDENTIALS_MODE': os.environ.get('AWS_CREDENTIALS_MODE', 'access_keys').lower(),
+    'AWS_ACCESS_KEY_ID': os.environ.get('AWS_ACCESS_KEY_ID', ''),
+    'AWS_SECRET_ACCESS_KEY': os.environ.get('AWS_SECRET_ACCESS_KEY', ''),
+    'S3_BUCKET_NAME': os.environ.get('AWS_STORAGE_BUCKET_NAME', ''),
+    'AWS_REGION': os.environ.get('AWS_S3_REGION_NAME', '').strip(),
+    'CLOUDFRONT_BASE_URL': os.environ.get(
+        'CLOUDFRONT_BASE_URL', os.environ.get('MEDIA_CDN_DOMAIN', '')
+    ).strip().rstrip('/'),
+    'CDN_DOMAIN': os.environ.get(
+        'CLOUDFRONT_BASE_URL', os.environ.get('MEDIA_CDN_DOMAIN', '')
+    ).strip().rstrip('/'),
+    'PRESIGNED_URL_TTL': int(os.environ.get('MEDIA_PRESIGNED_URL_TTL', '3600')),
+}
 STORAGES = {
     "default": {
         "BACKEND": "django.core.files.storage.FileSystemStorage",

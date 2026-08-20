@@ -5,16 +5,33 @@ from rest_framework import generics
 from rest_framework import permissions
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
+from rest_framework.views import APIView
 from django.http import JsonResponse
 from django.db.models import Q
 import os
 import meilisearch
+from common.media_storage import MediaStorageError, create_upload_target
 from common.pagination import StandardPagination
 #  Initialize Meilisearch client
 MEILISEARCH_URL = os.getenv('MEILISEARCH_URL')
 MASTER_KEY = os.getenv('MASTER_KEY')
 client = meilisearch.Client(MEILISEARCH_URL, MASTER_KEY)
 index = client.index('content')
+
+
+class MediaUploadTargetView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        try:
+            target = create_upload_target(
+                filename=request.data.get('filename'),
+                content_type=request.data.get('content_type'),
+                media_type=request.data.get('media_type'),
+            )
+        except MediaStorageError as exc:
+            return Response({'error': str(exc)}, status=400)
+        return Response(target, status=200)
 
 
 @api_view(['GET'])
