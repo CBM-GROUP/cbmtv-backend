@@ -16,7 +16,7 @@ class Content(models.Model):
         ('preview', 'Preview'),
         ('approved', 'Approved'),
         ('rejected', 'Rejected'),
-        ('comingsoon ','Comingsoon')
+        ('comingsoon', 'Comingsoon')
     ]
 
     title = models.CharField(max_length=200)

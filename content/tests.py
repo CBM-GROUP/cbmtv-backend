@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.urls import reverse
 from rest_framework.test import APITestCase, APIClient
 from rest_framework import status
@@ -34,7 +36,7 @@ class ContentUpdatePermissionsTests(APITestCase):
         )
 
         # Create a channel
-        self.channel = Channel.objects.create(name="CBM Movies")
+        self.channel, _ = Channel.objects.get_or_create(name="CBM Movies")
 
         # Create contents
         self.movie = Content.objects.create(
@@ -81,6 +83,44 @@ class ContentUpdatePermissionsTests(APITestCase):
         self.assertEqual(self.movie.director, "John Doe")
         self.assertEqual(self.movie.writer, "Jane Roe")
         self.assertEqual(self.movie.genre, "Action")
+
+    def test_admin_can_create_content_with_cloudfront_media_urls(self):
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            "title": "CloudFront Movie",
+            "description": "Uploaded directly to S3",
+            "content_type": "movie",
+            "channel": self.channel.id,
+            "status": "comingsoon",
+            "thumbnail": "https://cdn.example.com/cbm-images/poster.jpg",
+            "trailer_link": "https://cdn.example.com/trailer.mp4",
+            "streaming_link": "https://cdn.example.com/movie.mp4",
+            "duration": "00:20:00",
+        }
+
+        response = self.client.post(self.base_url, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        created = Content.objects.get(title="CloudFront Movie")
+        self.assertEqual(created.status, "comingsoon")
+        self.assertEqual(created.thumbnail, payload["thumbnail"])
+        self.assertEqual(created.streaming_link, payload["streaming_link"])
+        self.assertEqual(created.trailer_link, payload["trailer_link"])
+
+    def test_create_rejects_channel_zero(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(
+            self.base_url,
+            {
+                "title": "Invalid Channel",
+                "content_type": "movie",
+                "channel": 0,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("channel", response.data)
 
     def test_admin_can_patch_series(self):
         self.client.force_authenticate(user=self.admin_user)
@@ -148,7 +188,7 @@ class ContentUpdatePermissionsTests(APITestCase):
             title="Mini Ep 1",
             miniseries_no=1,
             streaming_link="https://example.com/m1.m3u8",
-            duration="00:20:00",
+            duration=timedelta(minutes=20),
             thumbnail="https://example.com/t1.jpg",
         )
 
