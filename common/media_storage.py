@@ -58,7 +58,9 @@ def create_upload_target(filename, content_type, media_type):
     if not bucket or not region or not cdn_url:
         raise MediaStorageError("AWS media storage is not fully configured.")
 
-    object_key = f'{rule["prefix"]}/{safe_unique_filename(filename)}'
+    generated_filename = safe_unique_filename(filename)
+    object_key = f'{rule["prefix"]}/{generated_filename}'
+    delivery_key = generated_filename if media_type == "video" else object_key
     client_options = {"region_name": region}
     if config.get("CREDENTIALS_MODE") == "access_keys":
         access_key = config.get("AWS_ACCESS_KEY_ID")
@@ -84,6 +86,6 @@ def create_upload_target(filename, content_type, media_type):
     return {
         "upload_url": upload_url,
         "object_key": object_key,
-        "delivery_url": build_delivery_url(cdn_url, object_key),
+        "delivery_url": build_delivery_url(cdn_url, delivery_key),
         "headers": {"Content-Type": content_type},
     }

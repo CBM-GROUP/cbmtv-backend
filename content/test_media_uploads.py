@@ -56,6 +56,9 @@ class MediaStorageTests(APITestCase):
         client.return_value.generate_presigned_url.return_value = "https://s3.example/upload"
         result = create_upload_target("movie.mp4", "video/mp4", "video")
         self.assertTrue(result["object_key"].startswith("cbmvideo/"))
+        filename = result["object_key"].removeprefix("cbmvideo/")
+        self.assertEqual(result["delivery_url"], f"https://cdn.example.com/{filename}")
+        self.assertNotIn("/cbmvideo/", result["delivery_url"])
 
     def test_rejects_mime_extension_mismatch(self):
         with self.assertRaises(MediaStorageError):
