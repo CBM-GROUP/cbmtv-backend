@@ -260,6 +260,9 @@ MEDIA_STORAGE = {
     'CDN_DOMAIN': os.environ.get(
         'CLOUDFRONT_BASE_URL', os.environ.get('MEDIA_CDN_DOMAIN', '')
     ).strip().rstrip('/'),
+    # Images are served straight from S3, not through CloudFront.
+    # Optional override, e.g. an images-only CDN; defaults to the bucket URL.
+    'IMAGE_BASE_URL': os.environ.get('MEDIA_IMAGE_BASE_URL', '').strip().rstrip('/'),
     'PRESIGNED_URL_TTL': int(os.environ.get('MEDIA_PRESIGNED_URL_TTL', '3600')),
 }
 STORAGES = {
