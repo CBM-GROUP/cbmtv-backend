@@ -1,0 +1,15 @@
+# Default: let Git normalize text files in the repo, checkout native on Windows.
+* text=auto
+
+# Files that are read by Linux containers MUST stay LF regardless of platform.
+# A CRLF checkout turns the shebang into `#!/bin/sh\r`, and the kernel then
+# reports "no such file or directory" for the interpreter — which is exactly
+# how docker/entrypoint.sh silently failed and left the Docker path unusable.
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
+
+# Binaries Git must not touch.
+*.sqlite3 binary
+*.pyc binary

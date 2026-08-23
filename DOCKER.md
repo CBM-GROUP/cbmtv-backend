@@ -25,6 +25,39 @@ docker compose down
 Add `--volumes` to `docker compose down` only when you intentionally want to
 delete the local PostgreSQL data.
 
+## Which database am I on?
+
+`settings.py` resolves the database in three steps: `DATABASE_URL`, then `DB_*`
+vars, then a **silent fallback to `db.sqlite3`**. That fallback is why
+migrations can look applied and still not "reflect" — the host shell and the
+container are two different databases, and both report themselves up to date.
+
+```bash
+docker compose exec api python manage.py dbinfo   # -> postgresql @ postgres:5432
+python manage.py dbinfo                           # -> sqlite3 fallback, with a warning
+```
+
+Always run migrations where the database is:
+
+```bash
+docker compose exec api python manage.py migrate
+docker compose exec api python manage.py createsuperuser
+```
+
+To point a host-side `runserver` at the container's Postgres instead of sqlite,
+set the `DB_*` vars (compose publishes Postgres on 5433 to avoid colliding with
+a local install):
+
+```bash
+DB_NAME=cbmtv DB_USER=cbmtv DB_PASSWORD=cbmtv_local_password DB_HOST=127.0.0.1 DB_PORT=5433 python manage.py runserver 8001
+```
+
+**This stack is not production.** Production is Railway, with its own managed
+Postgres reached via `DATABASE_URL`. Migrating locally proves the migrations
+apply cleanly; it does not change production. Production is migrated by the
+`preDeployCommand` in `railway.json` on each deploy, or manually with
+`railway run python manage.py migrate --noinput`.
+
 ## AWS deployment baseline
 
 The image is suitable for Amazon ECR and an ECS/Fargate service. Build it with
