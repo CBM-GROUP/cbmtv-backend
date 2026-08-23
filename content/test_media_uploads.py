@@ -5,7 +5,12 @@ from django.urls import resolve
 from rest_framework.test import APITestCase
 
 from accounts.models import User
-from common.media_storage import MediaStorageError, build_delivery_url, create_upload_target
+from common.media_storage import (
+    MediaStorageError,
+    build_delivery_url,
+    create_upload_target,
+    resolve_presign_ttl,
+)
 from content.views import MediaUploadTargetView
 
 
@@ -20,6 +25,10 @@ TEST_STORAGE = {
     "CDN_DOMAIN": "https://cdn.example.com",
     "IMAGE_BASE_URL": "",
     "PRESIGNED_URL_TTL": 3600,
+    "PRESIGNED_URL_MAX_TTL": 43200,
+    "MIN_UPLOAD_BYTES_PER_SEC": 100 * 1024,
+    "PRESIGNED_URL_OVERHEAD": 300,
+    "MAX_UPLOAD_BYTES": 5 * 1024**3,
 }
 
 
@@ -126,3 +135,89 @@ class MediaStorageTests(APITestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("test-secret-key", str(response.data))
+
+
+@override_settings(MEDIA_STORAGE=TEST_STORAGE)
+class PresignExpiryTests(APITestCase):
+    """The presigned window is sized to the file.
+
+    A flat one-hour TTL failed large uploads at the very end, after every byte
+    had already been sent -- the worst possible moment to find out.
+    """
+
+    def setUp(self):
+        self.url = "/api/content/media/upload-target/"
+        self.user = User.objects.create_user(
+            email="uploader@example.com",
+            password="pw",
+            name="Uploader",
+            phone="0700000000",
+            location="Kampala",
+            country="UG",
+        )
+
+    def test_small_file_keeps_the_floor(self):
+        self.assertEqual(resolve_presign_ttl(200 * 1024, TEST_STORAGE), 3600)
+
+    def test_missing_size_keeps_the_floor(self):
+        """Older clients omit size_bytes; they must not regress."""
+        self.assertEqual(resolve_presign_ttl(None, TEST_STORAGE), 3600)
+
+    def test_large_file_gets_a_proportional_window(self):
+        # 2 GiB at the 100 KB/s floor rate is ~5.8 hours, well past one hour.
+        ttl = resolve_presign_ttl(2 * 1024**3, TEST_STORAGE)
+        self.assertGreater(ttl, 3600)
+        self.assertEqual(ttl, int(2 * 1024**3 / (100 * 1024)) + 300)
+
+    def test_window_is_capped(self):
+        self.assertEqual(resolve_presign_ttl(500 * 1024**3, TEST_STORAGE), 43200)
+
+    @patch("common.media_storage.boto3.client")
+    def test_expiry_reaches_boto_and_the_response(self, client):
+        client.return_value.generate_presigned_url.return_value = "https://s3.example/upload"
+        result = create_upload_target("movie.mp4", "video/mp4", "video", size_bytes=2 * 1024**3)
+        expected = int(2 * 1024**3 / (100 * 1024)) + 300
+        _, kwargs = client.return_value.generate_presigned_url.call_args
+        self.assertEqual(kwargs["ExpiresIn"], expected)
+        self.assertEqual(result["expires_in"], expected)
+
+    def test_rejects_a_file_too_large_for_a_single_put(self):
+        """S3 caps a single-part PUT at 5 GiB. Fail before the upload, not after."""
+        with self.assertRaises(MediaStorageError):
+            create_upload_target("huge.mp4", "video/mp4", "video", size_bytes=6 * 1024**3)
+
+    def test_rejects_a_non_numeric_size(self):
+        with self.assertRaises(MediaStorageError):
+            create_upload_target("movie.mp4", "video/mp4", "video", size_bytes="big")
+
+    @patch("common.media_storage.boto3.client")
+    def test_endpoint_passes_size_through(self, client):
+        client.return_value.generate_presigned_url.return_value = "https://s3.example/upload"
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            self.url,
+            {
+                "filename": "movie.mp4",
+                "content_type": "video/mp4",
+                "media_type": "video",
+                "size_bytes": 2 * 1024**3,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertGreater(response.data["expires_in"], 3600)
+
+    def test_endpoint_reports_an_oversized_file(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            self.url,
+            {
+                "filename": "huge.mp4",
+                "content_type": "video/mp4",
+                "media_type": "video",
+                "size_bytes": 6 * 1024**3,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("too large", response.data["error"])

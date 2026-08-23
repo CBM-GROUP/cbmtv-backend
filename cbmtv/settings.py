@@ -318,7 +318,17 @@ MEDIA_STORAGE = {
     # Images are served straight from S3, not through CloudFront.
     # Optional override, e.g. an images-only CDN; defaults to the bucket URL.
     'IMAGE_BASE_URL': os.environ.get('MEDIA_IMAGE_BASE_URL', '').strip().rstrip('/'),
+    # Floor for a presigned PUT's validity. The actual window is sized to the
+    # declared upload size (see common.media_storage.resolve_presign_ttl), so a
+    # large file gets a proportionally longer one, up to MAX_TTL.
     'PRESIGNED_URL_TTL': int(os.environ.get('MEDIA_PRESIGNED_URL_TTL', '3600')),
+    'PRESIGNED_URL_MAX_TTL': int(os.environ.get('MEDIA_PRESIGNED_URL_MAX_TTL', '43200')),
+    # Pessimistic floor rate used to turn bytes into seconds: the speed a
+    # connection must beat, not a typical one. 100 KB/s ~= 0.8 Mbps.
+    'MIN_UPLOAD_BYTES_PER_SEC': int(os.environ.get('MEDIA_MIN_UPLOAD_BYTES_PER_SEC', str(100 * 1024))),
+    'PRESIGNED_URL_OVERHEAD': int(os.environ.get('MEDIA_PRESIGNED_URL_OVERHEAD', '300')),
+    # S3 caps a single-part PUT at 5 GiB; anything larger needs multipart.
+    'MAX_UPLOAD_BYTES': int(os.environ.get('MEDIA_MAX_UPLOAD_BYTES', str(5 * 1024**3))),
 }
 STORAGES = {
     "default": {

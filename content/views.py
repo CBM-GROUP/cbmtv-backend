@@ -28,6 +28,9 @@ class MediaUploadTargetView(APIView):
                 filename=request.data.get('filename'),
                 content_type=request.data.get('content_type'),
                 media_type=request.data.get('media_type'),
+                # Lets the backend size the URL's validity window to the file
+                # instead of applying one flat TTL to every upload.
+                size_bytes=request.data.get('size_bytes'),
             )
         except MediaStorageError as exc:
             return Response({'error': str(exc)}, status=400)
