@@ -55,6 +55,46 @@ SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", "0"))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", False)
 SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", False)
 
+# Django's DEFAULT_LOGGING gates its console handler behind require_debug_true
+# and routes `django.request` ERRORs (i.e. every unhandled 500) to mail_admins.
+# With DEBUG=False and no ADMINS/email backend — which is exactly how this
+# deploys — that means 500 tracebacks are discarded and the platform log shows
+# only the gunicorn access line. Log them to stdout instead so `railway logs`
+# (or `docker compose logs`) shows why a request failed.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {name} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": os.environ.get("DJANGO_LOG_LEVEL", "INFO"),
+    },
+    "loggers": {
+        "django.request": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+        "django.db.backends": {
+            # Flip to DEBUG via DJANGO_DB_LOG_LEVEL to see the failing SQL.
+            "handlers": ["console"],
+            "level": os.environ.get("DJANGO_DB_LOG_LEVEL", "WARNING"),
+            "propagate": False,
+        },
+    },
+}
+
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", [
     "127.0.0.1",
     "localhost",

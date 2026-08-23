@@ -15,7 +15,11 @@ class ChannelViewSet(viewsets.ModelViewSet):
     - Lists, retrieves, creates, updates, deletes channels.
     - Provides a custom paginated endpoint for content under a channel.
     """
-    queryset = Channel.objects.all()
+    # Ordered explicitly: PageNumberPagination slices an unordered queryset,
+    # which Postgres is free to return in a different order per query — rows
+    # then repeat or vanish across pages. Django warns about this
+    # (UnorderedObjectListWarning) rather than failing.
+    queryset = Channel.objects.all().order_by("name")
     serializer_class = ChannelSerializer
     permission_classes = [permissions.IsAdminUser]  # Default permissions
     pagination_class = StandardPagination
