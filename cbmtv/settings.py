@@ -104,32 +104,47 @@ ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", [
     ".up.railway.app",
 ])
 
+# The live frontends are cbmtv.cbmgroupco.com (stream) and
+# cbmtv-dashboard-five.vercel.app (dashboard). cbmtv-dashboard.vercel.app is a
+# stale Vercel deployment that no longer tracks main -- deliberately not trusted
+# here, so it cannot act against this API.
+#
+# The cbmtv.online names below do not currently resolve. They are kept because
+# the domain is ours and may be pointed here later; they grant nothing while
+# DNS is absent.
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [
     "http://localhost:8080",
     "http://localhost:8000",
     "http://localhost:3000",
+    "http://localhost:3001",
     "http://localhost:5137",
     "http://cbmtv.online",
     "https://cbmtv.online",
     "https://www.cbmtv.online",
+    "https://cbmtv.cbmgroupco.com",
     "https://cbmtv-ui.vercel.app",
-    "https://cbmtv-dashboard.vercel.app",
+    "https://cbmtv-dashboard-five.vercel.app",
     "https://api.cbmtv.online",
     "https://backend.cbmtv.online",
     "https://*.railway.app",
     "https://*.up.railway.app",
 ])
 
+# Production overrides this via the CORS_ALLOWED_ORIGINS env var, which already
+# lists the two live frontends. This default exists for local and any deploy that
+# does not set it, and is kept in step with the CSRF list above.
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", [
     "http://localhost:8080",
     "http://localhost:8000",
     "http://localhost:3000",
+    "http://localhost:3001",
     "http://localhost:5137",
     "http://cbmtv.online",
     "https://cbmtv.online",
     "https://www.cbmtv.online",
+    "https://cbmtv.cbmgroupco.com",
     "https://cbmtv-ui.vercel.app",
-    "https://cbmtv-dashboard.vercel.app",
+    "https://cbmtv-dashboard-five.vercel.app",
 ])
 
 # Application definition
