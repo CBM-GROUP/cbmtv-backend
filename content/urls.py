@@ -2,7 +2,7 @@ from django.urls import path
 from .views import (
     ContentListCreateView, ContentDetailView, EpisodeDetailView, EpisodeListCreateView, MovieListView, SeasonDetailView, SeasonListCreateView, content_ids,
     ContentAdvertListCreateView, ContentAdvertDetailView, MiniSeriesListCreateView, MiniSeriesDetailView,
-    MediaUploadTargetView, search_view
+    MediaUploadTargetView, search_view, ReindexView
     )
 
 urlpatterns = [
@@ -28,7 +28,11 @@ urlpatterns = [
     path('miniseries/', MiniSeriesListCreateView.as_view(), name='miniseries-list-create'),
     path('miniseries/<int:pk>/', MiniSeriesDetailView.as_view(), name='miniseries-detail'),
 
-    #SEARCH
+    # SEARCH -- read-only. Was a destructive full reindex on an unauthenticated
+    # GET; the rebuild now lives at reindex/ below.
     path('search/', search_view, name='search'),
+
+    # REINDEX -- administrative, POST only, IsAdminUser.
+    path('reindex/', ReindexView.as_view(), name='reindex'),
 
 ]

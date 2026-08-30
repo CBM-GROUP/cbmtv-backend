@@ -4,19 +4,40 @@ from .serializers import ContentSerializer, SeasonSerializer, EpisodeSerializer,
 from rest_framework import generics
 from rest_framework import permissions
 from rest_framework.response import Response
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.views import APIView
+from rest_framework.exceptions import ValidationError
+from django.conf import settings
 from django.http import JsonResponse
 from django.db.models import Q
 import os
 import meilisearch
 from common.media_storage import MediaStorageError, create_upload_target
 from common.pagination import StandardPagination
-#  Initialize Meilisearch client
-MEILISEARCH_URL = os.getenv('MEILISEARCH_URL')
-MASTER_KEY = os.getenv('MASTER_KEY')
-client = meilisearch.Client(MEILISEARCH_URL, MASTER_KEY)
-index = client.index('content')
+
+
+class SearchUnavailable(RuntimeError):
+    """Meilisearch is not configured for this deployment."""
+
+
+def get_search_index():
+    """
+    Build the Meilisearch index handle on demand.
+
+    This used to be module-level state (`client = meilisearch.Client(...)`,
+    `index = client.index('content')`) built from os.getenv at import time, with
+    the variable names absent from .env.example. Resolving it per call means a
+    deployment without Meilisearch configured fails as a clean 503 from the one
+    endpoint that needs it, instead of carrying a misconfigured client around.
+    """
+    if not settings.MEILISEARCH_URL:
+        raise SearchUnavailable(
+            'Search is not configured: MEILISEARCH_URL is unset.'
+        )
+    client = meilisearch.Client(
+        settings.MEILISEARCH_URL, settings.MEILISEARCH_MASTER_KEY
+    )
+    return client.index(settings.MEILISEARCH_INDEX)
 
 
 class MediaUploadTargetView(APIView):
@@ -37,47 +58,99 @@ class MediaUploadTargetView(APIView):
         return Response(target, status=200)
 
 
-@api_view(['GET'])
-def search_view(request):
+def build_search_documents():
     """
-    API to fetch all Content objects from the database and index them to Meilisearch.
+    The rows pushed into the Meilisearch index.
+
+    The previous version emitted `genres` from `content.genres.all()` guarded by
+    `hasattr(content, 'genres')`. Content has no such relation -- it has a
+    `genre` CharField -- so the guard was always False and every document was
+    indexed with an empty `genres: []`. Indexing the real field makes genre
+    searchable for the first time.
     """
-    try:
-        try:
-            # Delete existing index (optional)
-            client.index('content').delete()
-            return search_content(request)
-        except Exception:
-            # If deletion fails, still index content
-            return search_content(request)
-    except Exception as e:
-        return JsonResponse({
-            'status': 'error', 
-            'message': str(e)
-        }, status=500)
-
-
-def search_content(request):
-    # Fetch all content from database
-    contents = Content.objects.all()
-
-    # Prepare documents for Meilisearch
-    documents = []
-    for content in contents:
-        documents.append({
+    return [
+        {
             'id': content.id,
             'title': content.title,
-            # If you store genres as a ManyToManyField
-            'genres': [genre.name for genre in content.genres.all()] if hasattr(content, 'genres') else []
+            'genre': content.genre or '',
+            'content_type': content.content_type or '',
+        }
+        for content in Content.objects.all().order_by('id')
+    ]
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def search_view(request):
+    """
+    Read-only search over the Meilisearch content index.
+
+    GET /api/content/search/?q=<term>&limit=<n>
+
+    This endpoint previously DELETED the entire index and rebuilt it from the
+    database, on an unauthenticated GET, despite being named `search`. Any
+    crawler, prefetch or accidental navigation wiped search for everyone. The
+    rebuild now lives behind POST /api/content/reindex/ (admin only); this route
+    does what its name says and never writes.
+    """
+    query = (request.query_params.get('q') or '').strip()
+    if not query:
+        return Response({'query': '', 'count': 0, 'hits': []})
+
+    try:
+        limit = int(request.query_params.get('limit') or 20)
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(limit, 100))
+
+    try:
+        index = get_search_index()
+        result = index.search(query, {'limit': limit})
+    except SearchUnavailable as exc:
+        return Response({'detail': str(exc)}, status=503)
+    except Exception as exc:
+        return Response({'detail': f'Search backend unavailable: {exc}'}, status=502)
+
+    hits = result.get('hits', []) if isinstance(result, dict) else []
+    return Response({'query': query, 'count': len(hits), 'hits': hits})
+
+
+class ReindexView(APIView):
+    """
+    Rebuild the Meilisearch index from the database.
+
+    POST /api/content/reindex/ -- admin only. This is the administrative half of
+    the old `search_view`, now behind a write method and a permission check.
+    """
+    permission_classes = [permissions.IsAdminUser]
+
+    def post(self, request):
+        try:
+            index = get_search_index()
+        except SearchUnavailable as exc:
+            return Response({'status': 'error', 'message': str(exc)}, status=503)
+
+        documents = build_search_documents()
+
+        try:
+            try:
+                index.delete()
+            except Exception:
+                # A missing index is not an error: add_documents recreates it.
+                pass
+            # Re-resolve after the delete so the handle refers to the new index.
+            get_search_index().add_documents(documents)
+        except Exception as exc:
+            return Response(
+                {'status': 'error', 'message': f'Reindex failed: {exc}'}, status=502
+            )
+
+        return Response({
+            'status': 'success',
+            'indexed': len(documents),
+            # The dashboard's "Sync Search Data" button alerts response.data.message.
+            'message': f'Indexed {len(documents)} documents to Meilisearch',
         })
-
-    # Add documents to Meilisearch
-    index.add_documents(documents)
-
-    return JsonResponse({
-        'status': 'success',
-        'message': f'Indexed {len(documents)} documents to Meilisearch'
-    })
 
 @api_view(['GET'])
 def content_ids(request):
@@ -127,21 +200,54 @@ class ContentListCreateView(generics.ListCreateAPIView):
     pagination_class = StandardPagination
     
     def get_queryset(self):
+        """
+        Supports ?channel=, ?content_type= and ?genre=, composably.
+
+        Only `channel` used to be read here. `?content_type=series` -- which the
+        stream app's API_Routes.listSeries relies on, and which the mobile home
+        screen needs for its category rails -- was silently ignored and returned
+        the entire catalogue.
+        """
+        # Ordered explicitly: PageNumberPagination slices this queryset, and
+        # slicing an unordered one lets the database return a different order per
+        # page, so rows repeat or vanish between pages. Django warns about this
+        # (UnorderedObjectListWarning) rather than failing.
+        queryset = Content.objects.all().order_by('-id')
+
         channel_id = self.request.query_params.get('channel')
         if channel_id:
             # Be tolerant to trailing slashes like ?channel=5/
             try:
-                cleaned_id = int(str(channel_id).strip('/'))
-                return Content.objects.filter(channel_id=cleaned_id)
+                queryset = queryset.filter(channel_id=int(str(channel_id).strip('/')))
             except (TypeError, ValueError):
                 return Content.objects.none()
-        return Content.objects.all()
-    
+
+        content_type = self.request.query_params.get('content_type')
+        if content_type:
+            content_type = str(content_type).strip('/')
+            valid_types = [choice[0] for choice in Content.CONTENT_TYPES]
+            if content_type not in valid_types:
+                raise ValidationError({
+                    'content_type': (
+                        f"Invalid content type '{content_type}'. "
+                        f"Valid types: {', '.join(valid_types)}."
+                    )
+                })
+            queryset = queryset.filter(content_type=content_type)
+
+        genre = self.request.query_params.get('genre')
+        if genre:
+            # Genre is a free-text CharField holding values like "Short Movie",
+            # so match loosely rather than requiring an exact string.
+            queryset = queryset.filter(genre__icontains=str(genre).strip('/'))
+
+        return queryset
+
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
         return [permissions.IsAdminUser()]
-    
+
 #get, update, delete content
 class ContentDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Content.objects.all()
@@ -160,7 +266,10 @@ class MovieListView(generics.ListAPIView):
     pagination_class = StandardPagination
 
     def get_queryset(self):
-        return Content.objects.filter(content_type='movie')
+        # Ordered for the same reason as ContentListCreateView: this view is
+        # paginated, and slicing an unordered queryset lets rows repeat or
+        # vanish between pages.
+        return Content.objects.filter(content_type='movie').order_by('-id')
 
     def get_permissions(self):
         return [permissions.AllowAny()]
@@ -180,10 +289,10 @@ class SeasonListCreateView(generics.ListCreateAPIView):
             # Be tolerant to trailing slashes like ?content=12/
             try:
                 cleaned_id = int(str(content_id).strip('/'))
-                return Season.objects.filter(content_id=cleaned_id)
+                return Season.objects.filter(content_id=cleaned_id).order_by('season_number', 'id')
             except (TypeError, ValueError):
                 return Season.objects.none()
-        return Season.objects.all()
+        return Season.objects.all().order_by('season_number', 'id')
     
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
@@ -210,10 +319,10 @@ class EpisodeListCreateView(generics.ListCreateAPIView):
             # Be tolerant to trailing slashes like ?season=5/
             try:
                 cleaned_id = int(str(season_id).strip('/'))
-                return Episode.objects.filter(season_id=cleaned_id)
+                return Episode.objects.filter(season_id=cleaned_id).order_by('episode_number', 'id')
             except (TypeError, ValueError):
                 return Episode.objects.none()
-        return Episode.objects.all()
+        return Episode.objects.all().order_by('season_id', 'episode_number', 'id')
 
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
