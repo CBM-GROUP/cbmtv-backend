@@ -5,7 +5,13 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 
 # Create your models here.
 class UserManager(BaseUserManager):
-    def create_user(self, email, name, phone, location, country, image=None, password=None, role='user'):
+    # phone/location/country default to None because they are optional on the
+    # model (blank=True, null=True), which makes them optional in
+    # RegisterSerializer too. Without defaults here, a registration payload of
+    # just email/name/password reached create_user(**validated_data) missing
+    # three required arguments and raised TypeError -- surfacing as a 500 on
+    # POST /api/accounts/register/ rather than a created user.
+    def create_user(self, email, name, phone=None, location=None, country=None, image=None, password=None, role='user'):
         if not email:
             raise ValueError('Users must have an email address')
         email = self.normalize_email(email)
@@ -22,7 +28,7 @@ class UserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, email, name, phone, location, country, image=None, password=None, role='user'):
+    def create_superuser(self, email, name, phone=None, location=None, country=None, image=None, password=None, role='user'):
         if not email:
             raise ValueError('User must have an email address')
         email = self.normalize_email(email)

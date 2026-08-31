@@ -104,33 +104,84 @@ ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", [
     ".up.railway.app",
 ])
 
+# The live frontends are cbmtv.cbmgroupco.com (stream) and
+# cbmtv-dashboard-five.vercel.app (dashboard). cbmtv-dashboard.vercel.app is a
+# stale Vercel deployment that no longer tracks main -- deliberately not trusted
+# here, so it cannot act against this API.
+#
+# The cbmtv.online names below do not currently resolve. They are kept because
+# the domain is ours and may be pointed here later; they grant nothing while
+# DNS is absent.
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [
     "http://localhost:8080",
     "http://localhost:8000",
     "http://localhost:3000",
+    "http://localhost:3001",
     "http://localhost:5137",
     "http://cbmtv.online",
     "https://cbmtv.online",
     "https://www.cbmtv.online",
+    "https://cbmtv.cbmgroupco.com",
     "https://cbmtv-ui.vercel.app",
-    "https://cbmtv-dashboard.vercel.app",
+    "https://cbmtv-dashboard-five.vercel.app",
     "https://api.cbmtv.online",
     "https://backend.cbmtv.online",
     "https://*.railway.app",
     "https://*.up.railway.app",
 ])
 
+# Production overrides this via the CORS_ALLOWED_ORIGINS env var, which already
+# lists the two live frontends. This default exists for local and any deploy that
+# does not set it, and is kept in step with the CSRF list above.
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", [
     "http://localhost:8080",
     "http://localhost:8000",
     "http://localhost:3000",
+    "http://localhost:3001",
     "http://localhost:5137",
     "http://cbmtv.online",
     "https://cbmtv.online",
     "https://www.cbmtv.online",
+    "https://cbmtv.cbmgroupco.com",
     "https://cbmtv-ui.vercel.app",
-    "https://cbmtv-dashboard.vercel.app",
+    "https://cbmtv-dashboard-five.vercel.app",
 ])
+
+# Origins a developer's browser actually uses: the stream app, the dashboard,
+# and Expo's web/Metro ports for the mobile app. Native mobile builds do not
+# send an Origin header and are unaffected by CORS either way.
+LOCAL_DEV_CORS_ORIGINS = [
+    "http://localhost:3000", "http://127.0.0.1:3000",
+    "http://localhost:3001", "http://127.0.0.1:3001",
+    "http://localhost:3100", "http://127.0.0.1:3100",
+    "http://localhost:8081", "http://127.0.0.1:8081",
+    "http://localhost:19006", "http://127.0.0.1:19006",
+]
+
+# The deployed backend sets CORS_ALLOWED_ORIGINS, and that env var REPLACES the
+# default list above -- which is why the live API rejects every localhost
+# origin, and why the stream app cannot be run locally against it.
+#
+# Rather than loosening the production allowlist, local origins are appended
+# only when this instance is explicitly a development one: either DEBUG is on,
+# or CORS_ALLOW_LOCAL_DEV is set. Production runs DEBUG=false and does not set
+# that flag, so its allowlist is byte-for-byte unchanged. A staging deploy that
+# wants to serve local frontends can opt in with CORS_ALLOW_LOCAL_DEV=true
+# without anyone reaching for CORS_ALLOW_ALL_ORIGINS.
+if DEBUG or env_bool("CORS_ALLOW_LOCAL_DEV", False):
+    # dict.fromkeys de-duplicates while preserving order; the default list above
+    # already carries some of these.
+    CORS_ALLOWED_ORIGINS = list(
+        dict.fromkeys(CORS_ALLOWED_ORIGINS + LOCAL_DEV_CORS_ORIGINS)
+    )
+
+# --- Meilisearch -------------------------------------------------------------
+# Read here rather than via os.getenv at import time inside content/views.py, so
+# that a missing key degrades to a clean 503 from the search endpoint instead of
+# configuring a half-built client at module import.
+MEILISEARCH_URL = os.environ.get("MEILISEARCH_URL", "")
+MEILISEARCH_MASTER_KEY = os.environ.get("MASTER_KEY", "")
+MEILISEARCH_INDEX = os.environ.get("MEILISEARCH_INDEX", "content")
 
 # Application definition
 
@@ -303,7 +354,17 @@ MEDIA_STORAGE = {
     # Images are served straight from S3, not through CloudFront.
     # Optional override, e.g. an images-only CDN; defaults to the bucket URL.
     'IMAGE_BASE_URL': os.environ.get('MEDIA_IMAGE_BASE_URL', '').strip().rstrip('/'),
+    # Floor for a presigned PUT's validity. The actual window is sized to the
+    # declared upload size (see common.media_storage.resolve_presign_ttl), so a
+    # large file gets a proportionally longer one, up to MAX_TTL.
     'PRESIGNED_URL_TTL': int(os.environ.get('MEDIA_PRESIGNED_URL_TTL', '3600')),
+    'PRESIGNED_URL_MAX_TTL': int(os.environ.get('MEDIA_PRESIGNED_URL_MAX_TTL', '43200')),
+    # Pessimistic floor rate used to turn bytes into seconds: the speed a
+    # connection must beat, not a typical one. 100 KB/s ~= 0.8 Mbps.
+    'MIN_UPLOAD_BYTES_PER_SEC': int(os.environ.get('MEDIA_MIN_UPLOAD_BYTES_PER_SEC', str(100 * 1024))),
+    'PRESIGNED_URL_OVERHEAD': int(os.environ.get('MEDIA_PRESIGNED_URL_OVERHEAD', '300')),
+    # S3 caps a single-part PUT at 5 GiB; anything larger needs multipart.
+    'MAX_UPLOAD_BYTES': int(os.environ.get('MEDIA_MAX_UPLOAD_BYTES', str(5 * 1024**3))),
 }
 STORAGES = {
     "default": {

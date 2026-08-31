@@ -26,6 +26,55 @@ MEDIA_RULES = {
 }
 
 
+def resolve_presign_ttl(size_bytes, config):
+    """Seconds a presigned PUT should stay valid, given the size being sent.
+
+    A presigned URL is only good for one window, and the whole transfer has to
+    land inside it -- when it expires mid-upload the failure arrives at the very
+    end, after all the bytes have already been sent. A single flat TTL cannot
+    serve both a 200 KB thumbnail and a 2 GB feature, so the caller declares the
+    size and the window is sized to it.
+
+    The rate is deliberately pessimistic: it is the floor a connection has to
+    beat, not a typical speed. Bounded below by PRESIGNED_URL_TTL so nothing
+    regresses, and above by PRESIGNED_URL_MAX_TTL (AWS caps SigV4 at 7 days).
+    """
+    floor = int(config.get("PRESIGNED_URL_TTL", 3600))
+    ceiling = int(config.get("PRESIGNED_URL_MAX_TTL", 43200))
+    if ceiling < floor:
+        ceiling = floor
+
+    if not size_bytes:
+        return floor
+
+    rate = int(config.get("MIN_UPLOAD_BYTES_PER_SEC", 100 * 1024))
+    overhead = int(config.get("PRESIGNED_URL_OVERHEAD", 300))
+    needed = int(size_bytes / max(rate, 1)) + overhead
+    return max(floor, min(needed, ceiling))
+
+
+def parse_size_bytes(value, config):
+    """Validate a declared upload size, or None when the caller omitted it."""
+    if value in (None, ""):
+        return None
+    try:
+        size = int(value)
+    except (TypeError, ValueError) as exc:
+        raise MediaStorageError("size_bytes must be a whole number of bytes.") from exc
+    if size < 0:
+        raise MediaStorageError("size_bytes must not be negative.")
+
+    # A presigned PUT is a single-part upload, which S3 caps at 5 GiB. Reject it
+    # here rather than letting the user spend an hour discovering it.
+    limit = int(config.get("MAX_UPLOAD_BYTES", 5 * 1024**3))
+    if size > limit:
+        raise MediaStorageError(
+            f"File is too large for a single upload ({size / 1024**3:.1f} GB); "
+            f"the limit is {limit / 1024**3:.0f} GB."
+        )
+    return size
+
+
 def safe_unique_filename(filename):
     if not isinstance(filename, str) or not filename.strip():
         raise MediaStorageError("A filename is required.")
@@ -60,7 +109,7 @@ def build_s3_public_url(bucket, region, object_key, base_url=""):
     return f"https://{host}/{encode_object_key(object_key)}"
 
 
-def create_upload_target(filename, content_type, media_type):
+def create_upload_target(filename, content_type, media_type, size_bytes=None):
     rule = MEDIA_RULES.get(media_type)
     if not rule:
         raise MediaStorageError("Unsupported media type.")
@@ -70,6 +119,7 @@ def create_upload_target(filename, content_type, media_type):
         raise MediaStorageError(f"Unsupported {media_type} file type.")
 
     config = settings.MEDIA_STORAGE
+    size_bytes = parse_size_bytes(size_bytes, config)
     bucket = config.get("S3_BUCKET_NAME")
     region = config.get("AWS_REGION")
     cdn_url = config.get("CLOUDFRONT_BASE_URL") or config.get("CDN_DOMAIN")
@@ -119,12 +169,14 @@ def create_upload_target(filename, content_type, media_type):
             aws_secret_access_key=secret_key,
         )
 
+    expires_in = resolve_presign_ttl(size_bytes, config)
+
     try:
         s3 = boto3.client("s3", **client_options)
         upload_url = s3.generate_presigned_url(
             "put_object",
             Params={"Bucket": bucket, "Key": object_key, "ContentType": content_type},
-            ExpiresIn=config.get("PRESIGNED_URL_TTL", 3600),
+            ExpiresIn=expires_in,
             HttpMethod="PUT",
         )
     except Exception as exc:
@@ -135,4 +187,7 @@ def create_upload_target(filename, content_type, media_type):
         "object_key": object_key,
         "delivery_url": delivery_url,
         "headers": {"Content-Type": content_type},
+        # Surfaced so the client can tell the user how long it has, and so the
+        # value is visible in a failing request rather than only in settings.
+        "expires_in": expires_in,
     }
