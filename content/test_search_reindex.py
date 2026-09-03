@@ -32,11 +32,14 @@ class SearchReindexTestBase(APITestCase):
         self.reindex_url = reverse('reindex')
 
         self.channel = Channel.objects.create(name="Search Fixture")
-        Content.objects.create(
+        # Bound to names: search_view now hydrates Meilisearch hits against real
+        # rows, so a test must feed the index ids the database actually holds.
+        self.dija = Content.objects.create(
             title="Dear Dija", content_type="movie", genre="Short Movie",
+            description="Two teenagers bond over romance films.",
             channel=self.channel,
         )
-        Content.objects.create(
+        self.series = Content.objects.create(
             title="A Series", content_type="series", genre="Drama",
             channel=self.channel,
         )
@@ -61,7 +64,7 @@ class SearchReindexTestBase(APITestCase):
 
 class SearchViewTests(SearchReindexTestBase):
     def test_search_returns_hits_without_mutating_the_index(self):
-        index = self.make_index(hits=[{'id': 1, 'title': 'Dear Dija'}])
+        index = self.make_index(hits=[{'id': self.dija.id, 'title': 'Dear Dija'}])
 
         with patch('content.views.get_search_index', return_value=index):
             response = self.client.get(self.search_url, {'q': 'dija'})
@@ -120,21 +123,182 @@ class SearchViewTests(SearchReindexTestBase):
         response = self.client.post(self.search_url, {'q': 'x'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
-    def test_search_returns_503_when_meilisearch_is_unconfigured(self):
+    def test_unconfigured_meilisearch_falls_back_to_the_database(self):
+        """
+        This used to 503. A deployment with no Meilisearch is a normal state --
+        it should still be able to find a title, so search degrades to the
+        database rather than reporting itself broken.
+        """
         from content.views import SearchUnavailable
 
         with patch('content.views.get_search_index',
                    side_effect=SearchUnavailable('MEILISEARCH_URL is unset.')):
-            response = self.client.get(self.search_url, {'q': 'x'})
+            response = self.client.get(self.search_url, {'q': 'dija'})
 
-        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['source'], 'database')
+        self.assertEqual([h['title'] for h in response.data['hits']], ['Dear Dija'])
 
-    def test_search_returns_502_when_backend_errors(self):
+    def test_unreachable_meilisearch_falls_back_to_the_database(self):
+        """Was a 502. Same reasoning: an outage must not take search down."""
         index = self.make_index()
         index.search.side_effect = RuntimeError("connection refused")
+
+        with patch('content.views.get_search_index', return_value=index):
+            response = self.client.get(self.search_url, {'q': 'dija'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['source'], 'database')
+        self.assertEqual(response.data['count'], 1)
+
+
+class SearchHydrationTests(SearchReindexTestBase):
+    """
+    Meilisearch ranks; the database decides what comes back.
+
+    The production index held six documents from a dataset that no longer
+    existed. Two of its ids had since been reassigned to different programmes,
+    so the one query that did return a hit sent the viewer to the wrong title,
+    and two others resolved to nothing at all. Treating index documents as the
+    payload is what made that possible.
+    """
+
+    def test_hits_are_serialized_from_the_database_not_the_index(self):
+        """The index's copy of a title can be stale; the row cannot."""
+        index = self.make_index(hits=[{'id': self.dija.id, 'title': 'STALE TITLE'}])
+
+        with patch('content.views.get_search_index', return_value=index):
+            response = self.client.get(self.search_url, {'q': 'dija'})
+
+        hit = response.data['hits'][0]
+        self.assertEqual(hit['title'], 'Dear Dija')
+        self.assertEqual(hit['id'], self.dija.id)
+        # Full serializer output, so the client can render a real result row.
+        self.assertIn('thumbnail', hit)
+        self.assertIn('content_type', hit)
+        self.assertEqual(response.data['source'], 'meilisearch')
+
+    def test_ids_missing_from_the_database_are_dropped(self):
+        missing = self.series.id + 4242
+        index = self.make_index(hits=[
+            {'id': missing, 'title': 'Deleted Long Ago'},
+            {'id': self.dija.id, 'title': 'Dear Dija'},
+        ])
+
         with patch('content.views.get_search_index', return_value=index):
             response = self.client.get(self.search_url, {'q': 'x'})
-        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual([h['id'] for h in response.data['hits']], [self.dija.id])
+
+    def test_meilisearch_ranking_order_is_preserved(self):
+        """
+        in_bulk() returns rows in whatever order the database likes, so the view
+        has to reimpose the index ranking or relevance ordering is lost.
+        """
+        index = self.make_index(hits=[{'id': self.series.id}, {'id': self.dija.id}])
+        with patch('content.views.get_search_index', return_value=index):
+            forward = self.client.get(self.search_url, {'q': 'x'})
+        self.assertEqual(
+            [h['id'] for h in forward.data['hits']],
+            [self.series.id, self.dija.id],
+        )
+
+        index = self.make_index(hits=[{'id': self.dija.id}, {'id': self.series.id}])
+        with patch('content.views.get_search_index', return_value=index):
+            reverse = self.client.get(self.search_url, {'q': 'x'})
+        self.assertEqual(
+            [h['id'] for h in reverse.data['hits']],
+            [self.dija.id, self.series.id],
+        )
+
+    def test_a_wholly_stale_index_falls_back_to_the_database(self):
+        """
+        Every hit dropped during hydration is indistinguishable from no hits at
+        all, and is exactly the production failure. Fall through to the database
+        rather than reporting "no results" for a title that does exist.
+        """
+        index = self.make_index(hits=[
+            {'id': 90001, 'title': 'The Great Show'},
+            {'id': 90002, 'title': 'House of Kings'},
+        ])
+
+        with patch('content.views.get_search_index', return_value=index):
+            response = self.client.get(self.search_url, {'q': 'dija'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['source'], 'database')
+        self.assertEqual([h['title'] for h in response.data['hits']], ['Dear Dija'])
+
+    def test_empty_index_falls_back_to_the_database(self):
+        index = self.make_index(hits=[])
+        with patch('content.views.get_search_index', return_value=index):
+            response = self.client.get(self.search_url, {'q': 'series'})
+
+        self.assertEqual(response.data['source'], 'database')
+        self.assertEqual([h['title'] for h in response.data['hits']], ['A Series'])
+
+    def test_hits_with_unusable_ids_are_skipped_not_fatal(self):
+        """The index is external state and may hold an older document schema."""
+        index = self.make_index(hits=[
+            {'title': 'no id at all'},
+            {'id': None},
+            {'id': 'not-a-number'},
+            {'id': str(self.dija.id)},
+        ])
+
+        with patch('content.views.get_search_index', return_value=index):
+            response = self.client.get(self.search_url, {'q': 'x'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([h['id'] for h in response.data['hits']], [self.dija.id])
+
+    def test_no_match_anywhere_is_an_empty_result_not_an_error(self):
+        index = self.make_index(hits=[])
+        with patch('content.views.get_search_index', return_value=index):
+            response = self.client.get(self.search_url, {'q': 'zzzznotathing'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 0)
+        self.assertEqual(response.data['hits'], [])
+
+
+class DatabaseFallbackMatchingTests(SearchReindexTestBase):
+    """The fallback has to be usable on its own -- it is what answers today."""
+
+    def search(self, term, **params):
+        """Run a query with Meilisearch forced offline."""
+        from content.views import SearchUnavailable
+
+        with patch('content.views.get_search_index',
+                   side_effect=SearchUnavailable('off')):
+            return self.client.get(self.search_url, {'q': term, **params})
+
+    def test_matching_is_case_insensitive(self):
+        for term in ('dear dija', 'DEAR DIJA', 'DeAr DiJa'):
+            with self.subTest(term=term):
+                titles = [h['title'] for h in self.search(term).data['hits']]
+                self.assertEqual(titles, ['Dear Dija'])
+
+    def test_partial_matches_work(self):
+        for term in ('dij', 'ija', 'Dear'):
+            with self.subTest(term=term):
+                self.assertEqual(self.search(term).data['count'], 1)
+
+    def test_genre_is_searchable(self):
+        titles = [h['title'] for h in self.search('drama').data['hits']]
+        self.assertEqual(titles, ['A Series'])
+
+    def test_description_is_searchable(self):
+        titles = [h['title'] for h in self.search('romance films').data['hits']]
+        self.assertEqual(titles, ['Dear Dija'])
+
+    def test_fallback_respects_the_limit(self):
+        for n in range(12):
+            Content.objects.create(
+                title=f'Padding {n}', content_type='movie', channel=self.channel,
+            )
+        self.assertEqual(self.search('Padding', limit=5).data['count'], 5)
 
 
 class ReindexViewTests(SearchReindexTestBase):
