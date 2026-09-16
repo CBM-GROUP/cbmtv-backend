@@ -1,0 +1,47 @@
+name: cbmtv-prod
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cbmtv-api:prod
+    restart: always
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - GUNICORN_WORKERS=4
+      - RUN_MIGRATIONS=true
+      - COLLECT_STATIC=true
+    ports:
+      # In production, you typically put a reverse proxy (like Nginx or Caddy) in front of this port
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8000/health/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    env_file:
+      - path: .env
+        required: true
+    # NO port mapping to the host for security; the API container connects via the Docker network
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data_prod:

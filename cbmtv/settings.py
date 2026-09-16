@@ -100,6 +100,7 @@ ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", [
     "localhost",
     "api.cbmtv.online",
     "backend.cbmtv.online",
+    "apicbmtv.cbmgroupco.com",
     ".railway.app",
     ".up.railway.app",
 ])
@@ -122,6 +123,7 @@ CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [
     "https://cbmtv.online",
     "https://www.cbmtv.online",
     "https://cbmtv.cbmgroupco.com",
+    "https://apicbmtv.cbmgroupco.com",
     "https://cbmtv-ui.vercel.app",
     "https://cbmtv-dashboard-five.vercel.app",
     "https://api.cbmtv.online",
@@ -194,6 +196,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework_simplejwt',
+    'drf_spectacular',
     'accounts',
     'channel',
     'content',
@@ -211,6 +214,14 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
         'rest_framework.authentication.BasicAuthentication',
     ),
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'CBMTV API',
+    'DESCRIPTION': 'API documentation for CBMTV',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
 }
 
 MIDDLEWARE = [

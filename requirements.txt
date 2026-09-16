@@ -12,6 +12,7 @@ django-stubs-ext==5.2.1
 djangorestframework==3.16.0
 djangorestframework-stubs==3.16.0
 djangorestframework_simplejwt==5.5.1
+drf-spectacular==0.28.0
 dotenv==0.9.9
 gunicorn==23.0.0
 idna==3.10
