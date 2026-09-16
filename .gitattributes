@@ -13,3 +13,4 @@ docker-compose.yml text eol=lf
 # Binaries Git must not touch.
 *.sqlite3 binary
 *.pyc binary
+render.yaml text eol=lf

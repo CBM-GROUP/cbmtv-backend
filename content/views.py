@@ -67,6 +67,10 @@ def build_search_documents():
     `genre` CharField -- so the guard was always False and every document was
     indexed with an empty `genres: []`. Indexing the real field makes genre
     searchable for the first time.
+
+    `description` is indexed too, so a plot word can find a title. Only fields
+    worth *matching* on belong here: everything the client renders is read back
+    from the database in `search_view`, never from the index.
     """
     return [
         {
@@ -74,18 +78,101 @@ def build_search_documents():
             'title': content.title,
             'genre': content.genre or '',
             'content_type': content.content_type or '',
+            'description': content.description or '',
         }
         for content in Content.objects.all().order_by('id')
     ]
+
+
+def rebuild_search_index():
+    """
+    Drop and repopulate the Meilisearch content index from the database.
+
+    Shared by `POST /api/content/reindex/` and `manage.py reindex_search`, so the
+    HTTP route and the CLI cannot drift apart. Raises SearchUnavailable when
+    Meilisearch is unconfigured; any other exception is a backend failure and is
+    left for the caller to translate.
+    """
+    index = get_search_index()
+    documents = build_search_documents()
+
+    try:
+        index.delete()
+    except Exception:
+        # A missing index is not an error: add_documents recreates it.
+        pass
+
+    # Re-resolve after the delete so the handle refers to the new index.
+    get_search_index().add_documents(documents)
+    return len(documents)
+
+
+def _hit_ids(raw_hits):
+    """
+    The content ids Meilisearch ranked, in rank order.
+
+    Anything without a coercible integer id is skipped rather than raising --
+    the index is external state and may hold documents from an older schema.
+    """
+    ids = []
+    for hit in raw_hits:
+        if not isinstance(hit, dict):
+            continue
+        try:
+            ids.append(int(hit.get('id')))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _rank_ordered(ids):
+    """
+    Fetch Content rows for `ids`, preserving the order Meilisearch ranked them.
+
+    One query plus a dict lookup, not a query per hit. Ids the database no
+    longer holds simply fall out, which is what turns a stale index into fewer
+    results instead of links to the wrong programme.
+    """
+    rows = Content.objects.in_bulk(ids)
+    return [rows[i] for i in ids if i in rows]
+
+
+def _database_search(query, limit):
+    """
+    Search the database directly.
+
+    The fallback for whenever Meilisearch cannot answer -- unconfigured,
+    erroring, or holding an index so stale that nothing it ranked still exists.
+    `icontains` is case-insensitive and matches substrings, so partial titles
+    work with no index at all.
+    """
+    return list(
+        Content.objects.filter(
+            Q(title__icontains=query)
+            | Q(genre__icontains=query)
+            | Q(description__icontains=query)
+        ).order_by('-created_at', '-id')[:limit]
+    )
 
 
 @api_view(['GET'])
 @permission_classes([permissions.AllowAny])
 def search_view(request):
     """
-    Read-only search over the Meilisearch content index.
+    Read-only search over the content catalogue.
 
     GET /api/content/search/?q=<term>&limit=<n>
+
+    Meilisearch ranks; the database decides what actually comes back. Hits are
+    hydrated by id through `_rank_ordered`, so an index holding rows that no
+    longer exist yields fewer results rather than results pointing at whatever
+    record now owns that id. The production index did exactly that -- six
+    documents from an unrelated dataset, one of which resolved to a different
+    programme entirely.
+
+    When Meilisearch cannot answer -- unconfigured, unreachable, or stale enough
+    that nothing it ranked survived hydration -- this falls back to a database
+    `icontains` search instead of failing. `source` reports which path answered.
 
     This endpoint previously DELETED the entire index and rebuilt it from the
     database, on an unauthenticated GET, despite being named `search`. Any
@@ -95,7 +182,7 @@ def search_view(request):
     """
     query = (request.query_params.get('q') or '').strip()
     if not query:
-        return Response({'query': '', 'count': 0, 'hits': []})
+        return Response({'query': '', 'count': 0, 'hits': [], 'source': 'none'})
 
     try:
         limit = int(request.query_params.get('limit') or 20)
@@ -103,16 +190,34 @@ def search_view(request):
         limit = 20
     limit = max(1, min(limit, 100))
 
+    source = 'meilisearch'
+    rows = []
+
     try:
         index = get_search_index()
         result = index.search(query, {'limit': limit})
-    except SearchUnavailable as exc:
-        return Response({'detail': str(exc)}, status=503)
-    except Exception as exc:
-        return Response({'detail': f'Search backend unavailable: {exc}'}, status=502)
+        raw_hits = result.get('hits', []) if isinstance(result, dict) else []
+        rows = _rank_ordered(_hit_ids(raw_hits))
+    except SearchUnavailable:
+        source = 'database'
+    except Exception:
+        # Unreachable or erroring Meilisearch. Search degrades; it does not 502.
+        source = 'database'
 
-    hits = result.get('hits', []) if isinstance(result, dict) else []
-    return Response({'query': query, 'count': len(hits), 'hits': hits})
+    if not rows:
+        # Covers an empty index, an index stale enough that hydration dropped
+        # every hit, and a genuinely unmatched query. The database is cheap
+        # here and settles all three.
+        rows = _database_search(query, limit)
+        source = 'database'
+
+    hits = ContentSerializer(rows, many=True).data
+    return Response({
+        'query': query,
+        'count': len(hits),
+        'hits': hits,
+        'source': source,
+    })
 
 
 class ReindexView(APIView):
@@ -126,20 +231,9 @@ class ReindexView(APIView):
 
     def post(self, request):
         try:
-            index = get_search_index()
+            indexed = rebuild_search_index()
         except SearchUnavailable as exc:
             return Response({'status': 'error', 'message': str(exc)}, status=503)
-
-        documents = build_search_documents()
-
-        try:
-            try:
-                index.delete()
-            except Exception:
-                # A missing index is not an error: add_documents recreates it.
-                pass
-            # Re-resolve after the delete so the handle refers to the new index.
-            get_search_index().add_documents(documents)
         except Exception as exc:
             return Response(
                 {'status': 'error', 'message': f'Reindex failed: {exc}'}, status=502
@@ -147,9 +241,9 @@ class ReindexView(APIView):
 
         return Response({
             'status': 'success',
-            'indexed': len(documents),
+            'indexed': indexed,
             # The dashboard's "Sync Search Data" button alerts response.data.message.
-            'message': f'Indexed {len(documents)} documents to Meilisearch',
+            'message': f'Indexed {indexed} documents to Meilisearch',
         })
 
 @api_view(['GET'])

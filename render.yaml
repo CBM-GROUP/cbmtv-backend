@@ -1,0 +1,167 @@
+# Render Blueprint for the CBM TV Django API.
+#
+# Creates the web service and its Postgres. Apply with Render > Blueprints >
+# New Blueprint Instance, pointed at this repo on `master`.
+#
+# Values marked `sync: false` are NOT set by this file. Render creates the key
+# with an empty value and you fill it in the dashboard. Read the notes on
+# DATABASE_URL, SECRET_KEY and CORS_ALLOWED_ORIGINS before the first deploy --
+# each has a failure mode that is silent or fatal at startup.
+
+services:
+  - type: web
+    name: cbmtv-backend
+    runtime: docker
+    repo: https://github.com/CBM-GROUP/cbmtv-backend
+    # NOT `main`. This repo's default branch is `master`, unlike the other
+    # three CBM TV repos.
+    branch: master
+    region: frankfurt
+    plan: free
+    dockerfilePath: ./Dockerfile
+    # The health view calls connection.ensure_connection() and returns 503 when
+    # the database is unreachable, so this gates a deploy on real DB
+    # connectivity, not just on the process being up.
+    healthCheckPath: /health/
+    # No preDeployCommand: it is a paid-plan feature, and docker/entrypoint.sh
+    # already runs `migrate --noinput` then `collectstatic --noinput` on every
+    # boot, driven by RUN_MIGRATIONS / COLLECT_STATIC below.
+    autoDeploy: true
+
+    envVars:
+      # --- Database -----------------------------------------------------
+      # CRITICAL. settings.py resolves DATABASE_URL -> DB_* -> sqlite, and
+      # db.sqlite3 is a tracked file in this repo. If this var is ever absent
+      # Django does NOT error: it quietly serves the stale committed sqlite
+      # file. The symptom is "the site is up but all the content is wrong".
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cbmtv-postgres
+          property: connectionString
+
+      # --- Django core --------------------------------------------------
+      # Render generates a strong value. SIMPLE_JWT has no SIGNING_KEY override
+      # so it signs with SECRET_KEY, and a fresh value invalidates every issued
+      # refresh token -- normally a reason to copy Railway's instead. Two things
+      # override that here: Railway is unreachable so the old value cannot be
+      # retrieved, and settings.py falls back to a literal
+      # "django-insecure-..." key that is committed to a public repo. If the
+      # Railway service was ever running on that fallback, its tokens were
+      # forgeable and must NOT be carried forward.
+      - key: SECRET_KEY
+        generateValue: true
+
+      - key: DEBUG
+        value: "false"
+
+      # Django rejects any request whose Host is not listed here. The default
+      # in settings.py covers .railway.app and nothing on Render, so this must
+      # be set or every request 400s with DisallowedHost.
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com,127.0.0.1,localhost,api.cbmtv.online,backend.cbmtv.online"
+
+      # --- CORS / CSRF --------------------------------------------------
+      # Setting this REPLACES the default allowlist in settings.py rather than
+      # extending it, so every live frontend origin must appear here.
+      #
+      # NO TRAILING SLASHES. A trailing slash trips corsheaders.E014, Django
+      # runs system checks at startup, and a failed check kills the container.
+      # This exact mistake took production down once; the bad value sat in
+      # Railway for a week and only surfaced on the next restart.
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://cbmtv.cbmgroupco.com,https://cbmtv-dashboard-five.vercel.app"
+
+      # Also replaces rather than extends. cbmtv-dashboard.vercel.app is a
+      # stale deployment and is deliberately absent.
+      - key: CSRF_TRUSTED_ORIGINS
+        value: "https://cbmtv.cbmgroupco.com,https://cbmtv-dashboard-five.vercel.app,https://*.onrender.com,https://api.cbmtv.online,https://backend.cbmtv.online"
+
+      # Must stay false on production. It is the escape hatch that appends
+      # localhost origins, and it is implied whenever DEBUG=true.
+      - key: CORS_ALLOW_LOCAL_DEV
+        value: "false"
+
+      # --- TLS ----------------------------------------------------------
+      # SECURE_PROXY_SSL_HEADER is already hardcoded to X-Forwarded-Proto in
+      # settings.py, which is what Render's proxy sends, so Django sees these
+      # requests as secure. SECURE_SSL_REDIRECT is left off for the first
+      # deploy: if the health check probe arrives without that header the 301
+      # fails the check and the deploy never goes live. Turn it on, plus HSTS,
+      # once the service is confirmed healthy.
+      - key: SECURE_SSL_REDIRECT
+        value: "false"
+      - key: SECURE_HSTS_SECONDS
+        value: "0"
+
+      # --- Entrypoint / gunicorn ---------------------------------------
+      - key: RUN_MIGRATIONS
+        value: "true"
+      - key: COLLECT_STATIC
+        value: "true"
+      - key: GUNICORN_WORKERS
+        value: "2"
+      - key: GUNICORN_THREADS
+        value: "2"
+      - key: GUNICORN_TIMEOUT
+        value: "60"
+
+      # --- Meilisearch --------------------------------------------------
+      # Resolved per request, not at import, so a missing key degrades
+      # /api/content/search/ to a clean 503 instead of breaking startup.
+      # Note MASTER_KEY is the literal var name -- not MEILISEARCH_MASTER_KEY.
+      # Lives on RAILWAY (see the note at the end of this file). Moving the
+      # API to Render does not move the search engine with it.
+      - key: MEILISEARCH_URL
+        value: "https://getmeilimeilisearchv190-production-b688.up.railway.app"
+      - key: MASTER_KEY
+        sync: false
+      - key: MEILISEARCH_INDEX
+        value: content
+
+      # --- Media storage (backend only) ---------------------------------
+      # Never mirror any of these into a NEXT_PUBLIC_* variable.
+      - key: MEDIA_STORAGE_PROVIDER
+        value: s3
+      - key: AWS_CREDENTIALS_MODE
+        value: access_keys
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      # Not credentials: the bucket name and CDN host are already visible in
+      # every image/video URL the API hands to clients.
+      - key: AWS_STORAGE_BUCKET_NAME
+        value: crm-files-and-images
+      - key: AWS_S3_REGION_NAME
+        value: us-east-1
+      # Video only; images are served straight from the bucket. Delivery URLs
+      # include the full cbmvideo/ key prefix -- verify the distribution's
+      # OriginPath before changing any URL-shaping code.
+      - key: CLOUDFRONT_BASE_URL
+        value: "https://d1urdqn1o8hobe.cloudfront.net"
+      # Optional images-only CDN override. Blank = serve images from S3.
+      - key: MEDIA_IMAGE_BASE_URL
+        sync: false
+
+databases:
+  - name: cbmtv-postgres
+    databaseName: cbmtv
+    user: cbmtv
+    region: frankfurt
+    postgresMajorVersion: "16"
+    # WARNING: Render deletes a free Postgres instance 30 days after creation,
+    # and it cannot be upgraded to a paid plan in place. Before that date,
+    # either pg_dump this database and restore into a paid instance, or treat
+    # this whole blueprint as a migration rehearsal and keep Railway as prod.
+    plan: free
+
+# ---------------------------------------------------------------------------
+# NOT COVERED BY THIS BLUEPRINT
+#
+# Meilisearch runs as a separate Railway service
+# (getmeilimeilisearchv190-production-b688.up.railway.app). This blueprint
+# points the Render API at it across the public internet, which works but means
+# Railway CANNOT be torn down at cutover -- /api/content/search/ would start
+# returning 503 and the dashboard's "Sync Search Data" button would fail.
+# Either migrate Meilisearch too, or keep that one Railway service running.
+# ---------------------------------------------------------------------------
