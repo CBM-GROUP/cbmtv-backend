@@ -103,6 +103,7 @@ ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", [
     "apicbmtv.cbmgroupco.com",
     ".railway.app",
     ".up.railway.app",
+    ".onrender.com",
 ])
 
 # The live frontends are cbmtv.cbmgroupco.com (stream) and
@@ -130,6 +131,7 @@ CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [
     "https://backend.cbmtv.online",
     "https://*.railway.app",
     "https://*.up.railway.app",
+    "https://*.onrender.com",
 ])
 
 # Production overrides this via the CORS_ALLOWED_ORIGINS env var, which already
