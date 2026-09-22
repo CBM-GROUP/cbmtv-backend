@@ -101,8 +101,6 @@ ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", [
     "api.cbmtv.online",
     "backend.cbmtv.online",
     "apicbmtv.cbmgroupco.com",
-    ".railway.app",
-    ".up.railway.app",
     ".onrender.com",
 ])
 
@@ -129,8 +127,6 @@ CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [
     "https://cbmtv-dashboard-five.vercel.app",
     "https://api.cbmtv.online",
     "https://backend.cbmtv.online",
-    "https://*.railway.app",
-    "https://*.up.railway.app",
     "https://*.onrender.com",
 ])
 
