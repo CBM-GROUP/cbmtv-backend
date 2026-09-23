@@ -287,6 +287,22 @@ def content_ids(request):
         
         return Response(result)
 
+TRUE_VALUES = ('true', '1', 'yes')
+FALSE_VALUES = ('false', '0', 'no')
+
+
+def parse_bool_param(name, value):
+    """Parse a boolean query parameter, rejecting anything ambiguous with a 400."""
+    normalized = str(value).strip('/').strip().lower()
+    if normalized in TRUE_VALUES:
+        return True
+    if normalized in FALSE_VALUES:
+        return False
+    raise ValidationError({
+        name: f"Invalid value '{value}'. Use true or false."
+    })
+
+
 #list all content and create new content
 class ContentListCreateView(generics.ListCreateAPIView):
     queryset = Content.objects.all()
@@ -295,7 +311,8 @@ class ContentListCreateView(generics.ListCreateAPIView):
     
     def get_queryset(self):
         """
-        Supports ?channel=, ?content_type= and ?genre=, composably.
+        Supports ?channel=, ?content_type=, ?genre=, ?featured= and ?trending=,
+        composably.
 
         Only `channel` used to be read here. `?content_type=series` -- which the
         stream app's API_Routes.listSeries relies on, and which the mobile home
@@ -334,6 +351,11 @@ class ContentListCreateView(generics.ListCreateAPIView):
             # Genre is a free-text CharField holding values like "Short Movie",
             # so match loosely rather than requiring an exact string.
             queryset = queryset.filter(genre__icontains=str(genre).strip('/'))
+
+        for param, field in (('featured', 'is_featured'), ('trending', 'is_trending')):
+            value = self.request.query_params.get(param)
+            if value:
+                queryset = queryset.filter(**{field: parse_bool_param(param, value)})
 
         return queryset
 

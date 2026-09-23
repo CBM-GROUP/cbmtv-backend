@@ -88,3 +88,28 @@ class RoleChangeLog(models.Model):
 
     def __str__(self):
         return f"{self.changed_by.email}"
+
+class PasswordResetCode(models.Model):
+    """
+    A single-use, short-lived code emailed to a user who forgot their password.
+
+    Only a hash of the code is stored, so a leaked database row cannot be used
+    to reset anyone's password. A code dies when it is used, when it expires,
+    when a newer code is issued for the same user, or after MAX_ATTEMPTS wrong
+    guesses -- six digits is only a million possibilities, so the attempt cap
+    is what makes guessing impractical.
+    """
+    MAX_ATTEMPTS = 5
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="password_reset_codes")
+    code_hash = models.CharField(max_length=128)
+    expires_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    used = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Password reset for {self.user.email}"
