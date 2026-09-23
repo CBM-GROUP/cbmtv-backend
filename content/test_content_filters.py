@@ -136,6 +136,47 @@ class ContentFilterTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(self._titles(response), ["A Series"])
 
+    # --- featured / trending ----------------------------------------------
+
+    def _flag(self, featured=(), trending=()):
+        Content.objects.filter(pk__in=[c.pk for c in featured]).update(is_featured=True)
+        Content.objects.filter(pk__in=[c.pk for c in trending]).update(is_trending=True)
+
+    def test_flags_are_exposed_and_default_false(self):
+        response = self.client.get(self.url)
+        item = response.data['results'][0]
+        self.assertIs(item['is_featured'], False)
+        self.assertIs(item['is_trending'], False)
+
+    def test_filter_by_featured(self):
+        self._flag(featured=[self.movie_a, self.series])
+        response = self.client.get(self.url, {'featured': 'true'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._titles(response), ["A Series", "Dear Dija"])
+
+        response = self.client.get(self.url, {'featured': 'false'})
+        self.assertEqual(response.data['count'], 3)
+
+    def test_filter_by_trending_combines_with_content_type(self):
+        self._flag(trending=[self.movie_b, self.series])
+        response = self.client.get(
+            self.url, {'trending': 'true', 'content_type': 'movie'}
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._titles(response), ["Watu Wote"])
+
+    def test_featured_and_trending_combine(self):
+        self._flag(featured=[self.movie_a, self.series], trending=[self.series])
+        response = self.client.get(self.url, {'featured': '1', 'trending': 'true/'})
+        self.assertEqual(self._titles(response), ["A Series"])
+
+    def test_invalid_boolean_returns_400(self):
+        for param in ('featured', 'trending'):
+            with self.subTest(param=param):
+                response = self.client.get(self.url, {param: 'maybe'})
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertIn(param, response.data)
+
     # --- backwards compatibility -------------------------------------------
 
     def test_unfiltered_list_still_returns_everything(self):

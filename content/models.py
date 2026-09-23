@@ -33,6 +33,10 @@ class Content(models.Model):
     country = models.CharField(max_length=100, blank=True, null=True)
     status = models.CharField(max_length=100, blank=True, null=True, choices=STATUS_TYPES)
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="content")
+    # Editorial flags, set by an admin. Clients use them for the hero and the
+    # trending rail instead of guessing from recency.
+    is_featured = models.BooleanField(default=False, db_index=True)
+    is_trending = models.BooleanField(default=False, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
