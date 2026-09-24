@@ -14,7 +14,7 @@ fi
 # It does not update an existing user's password. Rotate the password in the
 # app, not by editing this env var, and delete DJANGO_SUPERUSER_PASSWORD from
 # the host once the account exists.
-if [ -n "${DJANGO_SUPERUSER_EMAIL:-}" ] && [ -n "${DJANGO_SUPERUSER_PASSWORD:-}" ]; then
+if [ "${SEED_SUPERUSER:-true}" = "true" ]; then
     python manage.py seed_superadmin || echo "superuser bootstrap: skipped (non-fatal)"
 fi
 
