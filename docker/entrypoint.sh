@@ -15,26 +15,7 @@ fi
 # app, not by editing this env var, and delete DJANGO_SUPERUSER_PASSWORD from
 # the host once the account exists.
 if [ -n "${DJANGO_SUPERUSER_EMAIL:-}" ] && [ -n "${DJANGO_SUPERUSER_PASSWORD:-}" ]; then
-    python manage.py shell <<'PYEOF' || echo "superuser bootstrap: skipped (non-fatal)"
-import os
-from django.contrib.auth import get_user_model
-
-User = get_user_model()
-email = os.environ["DJANGO_SUPERUSER_EMAIL"]
-if User.objects.filter(email=email).exists():
-    print("superuser bootstrap: %s already exists, left untouched" % email)
-else:
-    # accounts.User.REQUIRED_FIELDS = name, phone, location, country
-    User.objects.create_superuser(
-        email=email,
-        name=os.environ.get("DJANGO_SUPERUSER_NAME", "CBM TV Admin"),
-        phone=os.environ.get("DJANGO_SUPERUSER_PHONE", ""),
-        location=os.environ.get("DJANGO_SUPERUSER_LOCATION", ""),
-        country=os.environ.get("DJANGO_SUPERUSER_COUNTRY", ""),
-        password=os.environ["DJANGO_SUPERUSER_PASSWORD"],
-    )
-    print("superuser bootstrap: created %s (role=admin, staff, superuser)" % email)
-PYEOF
+    python manage.py seed_superadmin || echo "superuser bootstrap: skipped (non-fatal)"
 fi
 
 if [ "${COLLECT_STATIC:-true}" = "true" ]; then

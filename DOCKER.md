@@ -17,6 +17,7 @@ those defaults in production.
 Useful commands:
 
 ```sh
+docker compose exec api python manage.py seed_superadmin
 docker compose exec api python manage.py createsuperuser
 docker compose logs -f api
 docker compose down
@@ -41,7 +42,7 @@ Always run migrations where the database is:
 
 ```bash
 docker compose exec api python manage.py migrate
-docker compose exec api python manage.py createsuperuser
+docker compose exec api python manage.py seed_superadmin
 ```
 
 To point a host-side `runserver` at the container's Postgres instead of sqlite,
