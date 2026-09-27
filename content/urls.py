@@ -2,7 +2,7 @@ from django.urls import path
 from .views import (
     ContentListCreateView, ContentDetailView, EpisodeDetailView, EpisodeListCreateView, MovieListView, SeasonDetailView, SeasonListCreateView, content_ids,
     ContentAdvertListCreateView, ContentAdvertDetailView, MiniSeriesListCreateView, MiniSeriesDetailView,
-    MediaUploadTargetView, search_view, ReindexView
+    MediaUploadTargetView, search_view, ReindexView, HeroSettingsView
     )
 
 urlpatterns = [
@@ -21,6 +21,7 @@ urlpatterns = [
     path('episodes/<int:pk>/', EpisodeDetailView.as_view(), name='episode-detail'),
 
     # Adverts
+    path('hero-settings/', HeroSettingsView.as_view(), name='hero-settings'),
     path('adverts/', ContentAdvertListCreateView.as_view(), name='advert-list-create'),
     path('adverts/<int:pk>/', ContentAdvertDetailView.as_view(), name='advert-detail'),
 

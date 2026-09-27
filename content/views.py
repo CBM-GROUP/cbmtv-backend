@@ -1,6 +1,6 @@
 from rest_framework import viewsets
-from .models import Content, Season, Episode, contentadverts, MiniSeries
-from .serializers import ContentSerializer, SeasonSerializer, EpisodeSerializer, ContentAdvertSerializer, MiniSeriesSerializer
+from .models import Content, Season, Episode, contentadverts, MiniSeries, HeroSettings
+from .serializers import ContentSerializer, SeasonSerializer, EpisodeSerializer, ContentAdvertSerializer, MiniSeriesSerializer, HeroSettingsSerializer
 from rest_framework import generics
 from rest_framework import permissions
 from rest_framework.response import Response
@@ -458,6 +458,24 @@ class EpisodeDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 # adverts
+class HeroSettingsView(APIView):
+    def get_permissions(self):
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [permissions.AllowAny()]
+        return [permissions.IsAdminUser()]
+
+    def get(self, request):
+        instance = HeroSettings.objects.filter(pk=1).first() or HeroSettings()
+        return Response(HeroSettingsSerializer(instance).data)
+
+    def patch(self, request):
+        instance, _ = HeroSettings.objects.get_or_create(pk=1)
+        serializer = HeroSettingsSerializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
 class ContentAdvertListCreateView(generics.ListCreateAPIView):
     queryset = contentadverts.objects.all()
     serializer_class = ContentAdvertSerializer

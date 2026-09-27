@@ -80,9 +80,15 @@ class contentadverts(models.Model):
     advert_link = models.URLField(blank=True, null=True)
     stream_link = models.URLField(blank=True, null=True)
     advert_thumbnail = models.URLField(blank=True, null=True)
+    show_in_hero = models.BooleanField(default=True)
+    hero_order = models.PositiveIntegerField(default=0)
 
     def __str__(self):
         return f"{self.advert_type}"
+
+
+class HeroSettings(models.Model):
+    image_duration_seconds = models.PositiveSmallIntegerField(default=20)
 
 
 class MiniSeries(models.Model):
