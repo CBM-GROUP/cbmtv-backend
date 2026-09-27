@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Content, Season, Episode, contentadverts, MiniSeries
+from .models import Content, Season, Episode, contentadverts, MiniSeries, HeroSettings
 
 class ContentSerializer(serializers.ModelSerializer):
     class Meta:
@@ -33,6 +33,17 @@ class ContentAdvertSerializer(serializers.ModelSerializer):
     class Meta:
         model = contentadverts
         fields = '__all__'
+
+
+class HeroSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HeroSettings
+        fields = ('image_duration_seconds',)
+
+    def validate_image_duration_seconds(self, value):
+        if not 5 <= value <= 120:
+            raise serializers.ValidationError('Choose a duration between 5 and 120 seconds.')
+        return value
 
 
 class MiniSeriesSerializer(serializers.ModelSerializer):
