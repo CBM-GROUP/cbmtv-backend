@@ -18,6 +18,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          passphrase: ${{ secrets.EC2_PASSPHRASE }}
           script: |
             # Navigate to the project directory (Change this path if needed)
             cd ~/cbmtv-backend
