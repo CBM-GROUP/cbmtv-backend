@@ -43,5 +43,18 @@ services:
       timeout: 5s
       retries: 10
 
+  meilisearch:
+    image: getmeili/meilisearch:v1.9
+    restart: always
+    environment:
+      - MEILI_MASTER_KEY=${MASTER_KEY:-default_master_key_change_me}
+      - MEILI_NO_ANALYTICS=true
+      - MEILI_ENV=production
+    ports:
+      - "7700:7700"
+    volumes:
+      - meilisearch_data_prod:/meili_data
+
 volumes:
   postgres_data_prod:
+  meilisearch_data_prod:
