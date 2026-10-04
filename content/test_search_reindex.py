@@ -37,11 +37,11 @@ class SearchReindexTestBase(APITestCase):
         self.dija = Content.objects.create(
             title="Dear Dija", content_type="movie", genre="Short Movie",
             description="Two teenagers bond over romance films.",
-            channel=self.channel,
+            channel=self.channel, status='approved',
         )
         self.series = Content.objects.create(
             title="A Series", content_type="series", genre="Drama",
-            channel=self.channel,
+            channel=self.channel, status='approved',
         )
 
         self.admin = User.objects.create_user(
@@ -296,7 +296,7 @@ class DatabaseFallbackMatchingTests(SearchReindexTestBase):
     def test_fallback_respects_the_limit(self):
         for n in range(12):
             Content.objects.create(
-                title=f'Padding {n}', content_type='movie', channel=self.channel,
+                title=f'Padding {n}', content_type='movie', channel=self.channel, status='approved',
             )
         self.assertEqual(self.search('Padding', limit=5).data['count'], 5)
 

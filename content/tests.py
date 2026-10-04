@@ -44,6 +44,7 @@ class ContentUpdatePermissionsTests(APITestCase):
             description="Desc",
             content_type="movie",
             channel=self.channel,
+            status='approved',
         )
 
         self.series = Content.objects.create(
@@ -51,6 +52,7 @@ class ContentUpdatePermissionsTests(APITestCase):
             description="Desc",
             content_type="series",
             channel=self.channel,
+            status='approved',
         )
 
         self.miniseries_parent = Content.objects.create(
@@ -58,6 +60,7 @@ class ContentUpdatePermissionsTests(APITestCase):
             description="Desc",
             content_type="miniseries",
             channel=self.channel,
+            status='approved',
         )
 
         # Base URLs (content app likely included under /api/content/ by project urls)

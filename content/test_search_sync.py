@@ -47,7 +47,7 @@ class ContentSearchSyncTests(TestCase):
     def test_index_document_uses_current_content_fields(self):
         content = Content.objects.create(
             title='Renamed title', description='New description', genre='Drama',
-            content_type='movie', channel=self.channel,
+            content_type='movie', channel=self.channel, status='approved',
         )
         index = MagicMock()
         index.add_documents.return_value.task_uid = 42
@@ -58,7 +58,7 @@ class ContentSearchSyncTests(TestCase):
         index.wait_for_task.assert_called_once_with(42, timeout_in_ms=3000)
 
     def test_index_failure_does_not_undo_database_save(self):
-        content = Content.objects.create(title='Saved title', content_type='movie', channel=self.channel)
+        content = Content.objects.create(title='Saved title', content_type='movie', channel=self.channel, status='approved')
         with patch('content.search_sync.get_search_index', side_effect=RuntimeError('offline')):
             with self.assertLogs('content.search_sync', level='ERROR') as logs:
                 upsert_content(content.id)
@@ -92,7 +92,7 @@ class ContentSearchSyncTests(TestCase):
             with self.captureOnCommitCallbacks(execute=True):
                 created = self.client.post('/api/content/', {
                     'title': 'Mobile search fixture', 'content_type': 'movie',
-                    'channel': self.channel.id,
+                    'channel': self.channel.id, 'status': 'approved',
                 }, format='json')
             self.assertEqual(created.status_code, 201)
             content_id = created.data['id']

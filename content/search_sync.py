@@ -6,6 +6,7 @@ import meilisearch
 from django.conf import settings
 
 from .models import Content
+from .publication import PUBLIC_STATUS
 
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,9 @@ def upsert_content(content_id):
     try:
         content = Content.objects.filter(pk=content_id).first()
         if content is None:
+            return
+        if content.status != PUBLIC_STATUS:
+            remove_content(content_id)
             return
         index = get_search_index()
         _wait_for_success(index, index.add_documents([content_document(content)]))

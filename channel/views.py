@@ -6,6 +6,7 @@ from .models import Channel
 from .serializers import ChannelSerializer
 from content.models import Content
 from content.serializers import ContentSerializer
+from content.publication import visible_queryset
 
 
 
@@ -44,7 +45,7 @@ class ChannelViewSet(viewsets.ModelViewSet):
         Endpoint: /api/channels/<id>/contents/
         """
         channel = self.get_object()
-        contents_qs = Content.objects.filter(channel=channel).order_by('-id')  # optional ordering
+        contents_qs = visible_queryset(request, Content.objects.filter(channel=channel)).order_by('-id')
 
         # Apply pagination
         page = self.paginate_queryset(contents_qs)

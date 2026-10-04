@@ -24,18 +24,18 @@ class LibraryTestCase(APITestCase):
         # Not a seeded channel name -- see channel/signals.py.
         self.channel = Channel.objects.create(name="Library Fixture")
         self.movie = Content.objects.create(
-            title="Dear Dija", content_type="movie", channel=self.channel,
+            title="Dear Dija", content_type="movie", channel=self.channel, status='approved',
         )
         self.movie_b = Content.objects.create(
-            title="Watu Wote", content_type="movie", channel=self.channel,
+            title="Watu Wote", content_type="movie", channel=self.channel, status='approved',
         )
         self.series = Content.objects.create(
-            title="A Series", content_type="series", channel=self.channel,
+            title="A Series", content_type="series", channel=self.channel, status='approved',
         )
         self.season = Season.objects.create(content=self.series, title="S1", season_number=1)
         self.episode = Episode.objects.create(season=self.season, title="E1", episode_number=1)
         self.mini = Content.objects.create(
-            title="A Miniseries", content_type="miniseries", channel=self.channel,
+            title="A Miniseries", content_type="miniseries", channel=self.channel, status='approved',
         )
         self.part = MiniSeries.objects.create(content=self.mini, title="Part 1", miniseries_no=1)
 

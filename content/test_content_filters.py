@@ -29,23 +29,23 @@ class ContentFilterTests(APITestCase):
 
         self.movie_a = Content.objects.create(
             title="Dear Dija", content_type="movie", genre="Short Movie",
-            channel=self.movies_channel,
+            channel=self.movies_channel, status='approved',
         )
         self.movie_b = Content.objects.create(
             title="Watu Wote", content_type="movie", genre="Drama",
-            channel=self.music_channel,
+            channel=self.music_channel, status='approved',
         )
         self.series = Content.objects.create(
             title="A Series", content_type="series", genre="Drama",
-            channel=self.movies_channel,
+            channel=self.movies_channel, status='approved',
         )
         self.animation = Content.objects.create(
             title="Escape From School", content_type="animations", genre="Family",
-            channel=self.movies_channel,
+            channel=self.movies_channel, status='approved',
         )
         self.documentary = Content.objects.create(
             title="A Documentary", content_type="documentary", genre="Nature",
-            channel=self.music_channel,
+            channel=self.music_channel, status='approved',
         )
 
     def _titles(self, response):
@@ -225,7 +225,7 @@ class ContentPaginationTests(APITestCase):
     def setUpTestData(cls):
         channel = Channel.objects.create(name="Pagination Fixture")
         Content.objects.bulk_create([
-            Content(title=f"Item {i}", content_type="movie", channel=channel)
+            Content(title=f"Item {i}", content_type="movie", channel=channel, status='approved')
             for i in range(105)
         ])
 
