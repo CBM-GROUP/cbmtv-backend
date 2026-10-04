@@ -10,34 +10,11 @@ from rest_framework.exceptions import ValidationError
 from django.conf import settings
 from django.http import JsonResponse
 from django.db.models import Q
+from django.db import transaction
 import os
-import meilisearch
 from common.media_storage import MediaStorageError, create_upload_target
 from common.pagination import StandardPagination
-
-
-class SearchUnavailable(RuntimeError):
-    """Meilisearch is not configured for this deployment."""
-
-
-def get_search_index():
-    """
-    Build the Meilisearch index handle on demand.
-
-    This used to be module-level state (`client = meilisearch.Client(...)`,
-    `index = client.index('content')`) built from os.getenv at import time, with
-    the variable names absent from .env.example. Resolving it per call means a
-    deployment without Meilisearch configured fails as a clean 503 from the one
-    endpoint that needs it, instead of carrying a misconfigured client around.
-    """
-    if not settings.MEILISEARCH_URL:
-        raise SearchUnavailable(
-            'Search is not configured: MEILISEARCH_URL is unset.'
-        )
-    client = meilisearch.Client(
-        settings.MEILISEARCH_URL, settings.MEILISEARCH_MASTER_KEY
-    )
-    return client.index(settings.MEILISEARCH_INDEX)
+from .search_sync import SearchUnavailable, get_search_index, content_document, upsert_content, remove_content
 
 
 class MediaUploadTargetView(APIView):
@@ -72,16 +49,7 @@ def build_search_documents():
     worth *matching* on belong here: everything the client renders is read back
     from the database in `search_view`, never from the index.
     """
-    return [
-        {
-            'id': content.id,
-            'title': content.title,
-            'genre': content.genre or '',
-            'content_type': content.content_type or '',
-            'description': content.description or '',
-        }
-        for content in Content.objects.all().order_by('id')
-    ]
+    return [content_document(content) for content in Content.objects.all().order_by('id')]
 
 
 def rebuild_search_index():
@@ -308,6 +276,10 @@ class ContentListCreateView(generics.ListCreateAPIView):
     queryset = Content.objects.all()
     serializer_class = ContentSerializer
     pagination_class = StandardPagination
+
+    def perform_create(self, serializer):
+        content = serializer.save()
+        transaction.on_commit(lambda content_id=content.id: upsert_content(content_id))
     
     def get_queryset(self):
         """
@@ -368,6 +340,15 @@ class ContentListCreateView(generics.ListCreateAPIView):
 class ContentDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Content.objects.all()
     serializer_class = ContentSerializer
+
+    def perform_update(self, serializer):
+        content = serializer.save()
+        transaction.on_commit(lambda content_id=content.id: upsert_content(content_id))
+
+    def perform_destroy(self, instance):
+        content_id = instance.id
+        instance.delete()
+        transaction.on_commit(lambda: remove_content(content_id))
     
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
