@@ -11,6 +11,7 @@ from channel.models import Channel
 from library.models import SavedItem, WatchProgress
 
 from .models import Content, Episode, MiniSeries, Season
+from .publication import HasDashboardMediaAccess, can_read_dashboard_content, dashboard_sections
 from .views import build_search_documents
 
 
@@ -70,6 +71,27 @@ class PublicationTests(TestCase):
                      '/api/content/seasons/?scope=dashboard'):
             self.assertEqual(self.client.get(path).status_code, 403, path)
         self.assertEqual(self.client.get(f'/api/content/{self.preview.id}/').status_code, 404)
+
+    def test_dashboard_read_scope_matches_pending_content_role(self):
+        role_user = SimpleNamespace(
+            is_authenticated=True, is_active=True, must_change_password=False,
+            dashboard_role_id=1, dashboard_role=SimpleNamespace(permissions=['content']),
+            is_staff=False, is_superuser=False, role='user',
+        )
+        self.assertTrue(can_read_dashboard_content(role_user))
+        self.assertIn('content', dashboard_sections(role_user))
+        role_user.dashboard_role.permissions = ['users']
+        self.assertFalse(can_read_dashboard_content(role_user))
+        media_permission = HasDashboardMediaAccess()
+        self.assertFalse(media_permission.has_permission(SimpleNamespace(user=role_user), None))
+        role_user.dashboard_role.permissions = ['channels']
+        self.assertTrue(media_permission.has_permission(SimpleNamespace(user=role_user), None))
+        role_user.dashboard_role.permissions = ['content']
+        role_user.must_change_password = True
+        self.assertFalse(can_read_dashboard_content(role_user))
+        role_user.must_change_password = False
+        role_user.is_active = False
+        self.assertFalse(can_read_dashboard_content(role_user))
 
     def test_staff_scope_reads_all_statuses_and_unapproved_children(self):
         self.client.force_authenticate(user=self.admin)

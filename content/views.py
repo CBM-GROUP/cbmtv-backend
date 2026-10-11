@@ -14,12 +14,12 @@ from django.db import transaction
 import os
 from common.media_storage import MediaStorageError, create_upload_target
 from common.pagination import StandardPagination
-from .publication import PUBLIC_STATUS, dashboard_scope, visible_queryset
+from .publication import PUBLIC_STATUS, HasDashboardMediaAccess, dashboard_scope, visible_queryset
 from .search_sync import SearchUnavailable, get_search_index, content_document, upsert_content, remove_content
 
 
 class MediaUploadTargetView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [HasDashboardMediaAccess]
 
     def post(self, request):
         try:
