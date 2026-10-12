@@ -221,6 +221,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'password_reset': os.environ.get('PASSWORD_RESET_THROTTLE_RATE', '5/hour'),
         'password_reset_confirm': os.environ.get('PASSWORD_RESET_CONFIRM_THROTTLE_RATE', '20/hour'),
+        'dashboard_activate': os.environ.get('DASHBOARD_ACTIVATE_THROTTLE_RATE', '10/hour'),
     },
 }
 

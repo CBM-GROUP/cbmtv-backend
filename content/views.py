@@ -14,6 +14,7 @@ from django.db import transaction
 import os
 from common.media_storage import MediaStorageError, create_upload_target
 from common.pagination import StandardPagination
+from accounts.permissions import HasDashboardSection
 from .publication import PUBLIC_STATUS, HasDashboardMediaAccess, dashboard_scope, visible_queryset
 from .search_sync import SearchUnavailable, get_search_index, content_document, upsert_content, remove_content
 
@@ -190,13 +191,14 @@ def search_view(request):
 
 
 class ReindexView(APIView):
+    required_section = 'content'
     """
     Rebuild the Meilisearch index from the database.
 
     POST /api/content/reindex/ -- admin only. This is the administrative half of
     the old `search_view`, now behind a write method and a permission check.
     """
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [HasDashboardSection]
 
     def post(self, request):
         try:
@@ -275,6 +277,7 @@ def parse_bool_param(name, value):
 
 #list all content and create new content
 class ContentListCreateView(generics.ListCreateAPIView):
+    required_section = 'content'
     queryset = Content.objects.all()
     serializer_class = ContentSerializer
     pagination_class = StandardPagination
@@ -336,10 +339,11 @@ class ContentListCreateView(generics.ListCreateAPIView):
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 #get, update, delete content
 class ContentDetailView(generics.RetrieveUpdateDestroyAPIView):
+    required_section = 'content'
     queryset = Content.objects.all()
     serializer_class = ContentSerializer
 
@@ -358,7 +362,7 @@ class ContentDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
     
 
 #movies: creat only
@@ -380,6 +384,7 @@ class MovieListView(generics.ListAPIView):
 
 #create & list seasons
 class SeasonListCreateView(generics.ListCreateAPIView):
+    required_section = 'content'
     queryset = Season.objects.all()
     serializer_class = SeasonSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -400,9 +405,10 @@ class SeasonListCreateView(generics.ListCreateAPIView):
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 #retrieve.update,delete single season
 class SeasonDetailView(generics.RetrieveUpdateDestroyAPIView):
+    required_section = 'content'
     queryset = Season.objects.all()
     serializer_class=SeasonSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -413,9 +419,10 @@ class SeasonDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 class EpisodeListCreateView(generics.ListCreateAPIView):
+    required_section = 'content'
     serializer_class = EpisodeSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
@@ -434,10 +441,11 @@ class EpisodeListCreateView(generics.ListCreateAPIView):
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 
 class EpisodeDetailView(generics.RetrieveUpdateDestroyAPIView):
+    required_section = 'content'
     queryset = Episode.objects.all()
     serializer_class = EpisodeSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -448,15 +456,16 @@ class EpisodeDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 
 # adverts
 class HeroSettingsView(APIView):
+    required_section = 'settings'
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
     def get(self, request):
         instance = HeroSettings.objects.filter(pk=1).first() or HeroSettings()
@@ -471,26 +480,29 @@ class HeroSettingsView(APIView):
 
 
 class ContentAdvertListCreateView(generics.ListCreateAPIView):
+    required_section = 'adverts'
     queryset = contentadverts.objects.all()
     serializer_class = ContentAdvertSerializer
 
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 
 class ContentAdvertDetailView(generics.RetrieveUpdateDestroyAPIView):
+    required_section = 'adverts'
     queryset = contentadverts.objects.all()
     serializer_class = ContentAdvertSerializer
 
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 
 class MiniSeriesListCreateView(generics.ListCreateAPIView):
+    required_section = 'content'
     queryset = MiniSeries.objects.all()
     serializer_class = MiniSeriesSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -510,10 +522,11 @@ class MiniSeriesListCreateView(generics.ListCreateAPIView):
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 
 class MiniSeriesDetailView(generics.RetrieveUpdateDestroyAPIView):
+    required_section = 'content'
     queryset = MiniSeries.objects.all()
     serializer_class = MiniSeriesSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -524,5 +537,5 @@ class MiniSeriesDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 

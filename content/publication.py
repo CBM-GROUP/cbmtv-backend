@@ -2,25 +2,14 @@
 
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import BasePermission
+from accounts.permissions import dashboard_permissions
 
 
 PUBLIC_STATUS = 'approved'
 
 
 def dashboard_sections(user):
-    if not user.is_authenticated or not user.is_active or getattr(user, 'must_change_password', False):
-        return ()
-
-    # The released User model has no dashboard_role field. Preserve its staff
-    # access until the separate role migration is integrated.
-    if not hasattr(user, 'dashboard_role_id'):
-        return ('channels', 'content', 'adverts') if user.is_staff else ()
-
-    # Match the section permissions in the pending dashboard-role contract.
-    if user.is_superuser or (user.is_staff and user.role in ('admin', 'internal_admin')):
-        return ('channels', 'content', 'adverts', 'settings', 'users')
-    role = getattr(user, 'dashboard_role', None)
-    return tuple(role.permissions) if role else ()
+    return tuple(dashboard_permissions(user))
 
 
 def can_read_dashboard_content(user):

@@ -46,6 +46,9 @@ class UserUpdateView(APIView):
         except User.DoesNotExist:
             return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        if target_user.pk != request.user.pk:
+            return Response({"detail": "You can only edit your own profile."}, status=status.HTTP_403_FORBIDDEN)
+
         # Allow any authenticated user to edit profile fields by user id
         data = request.data.copy()
         allowed_fields = {"name", "phone", "location", "country", "image", "email"}
@@ -71,6 +74,9 @@ class ChangePasswordView(APIView):
             target_user = User.objects.get(pk=pk)
         except User.DoesNotExist:
             return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if target_user.pk != request.user.pk:
+            return Response({"detail": "You can only change your own password."}, status=status.HTTP_403_FORBIDDEN)
 
         current_password = request.data.get('current_password', '')
         new_password = request.data.get('new_password', '')
@@ -178,6 +184,11 @@ class GoogleDirectLoginView(APIView):
                 'auth_provider': 'google',
             }
         )
+
+        # This legacy direct-login path does not verify an upstream Google token.
+        # Never let it issue dashboard or inactive-account credentials.
+        if not user.is_active or user.must_change_password or user.dashboard_role_id or user.is_staff or user.is_superuser:
+            return Response({'detail': 'This account cannot use direct login.'}, status=status.HTTP_403_FORBIDDEN)
 
         # Ensure provider is google
         if user.auth_provider != 'google':

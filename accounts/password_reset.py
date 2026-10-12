@@ -36,7 +36,7 @@ def generate_code():
 
 
 def _find_active_user(email):
-    return User.objects.filter(email__iexact=email.strip(), is_active=True).first()
+    return User.objects.filter(email__iexact=email.strip(), is_active=True, must_change_password=False).first()
 
 
 def issue_reset_code(user):
@@ -147,7 +147,10 @@ class PasswordResetConfirmView(APIView):
                 )
 
             user.set_password(data['new_password'])
-            user.save(update_fields=['password'])
+            user.must_change_password = False
+            user.temporary_pin_expires_at = None
+            user.temporary_pin_attempts = 0
+            user.save(update_fields=['password', 'must_change_password', 'temporary_pin_expires_at', 'temporary_pin_attempts'])
             reset.used = True
             reset.save(update_fields=['used'])
 
