@@ -29,6 +29,9 @@ def env_list(name, default=None):
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+GOOGLE_OAUTH_CLIENT_IDS = env_list('GOOGLE_OAUTH_CLIENT_IDS')
+
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -222,6 +225,8 @@ REST_FRAMEWORK = {
         'password_reset': os.environ.get('PASSWORD_RESET_THROTTLE_RATE', '5/hour'),
         'password_reset_confirm': os.environ.get('PASSWORD_RESET_CONFIRM_THROTTLE_RATE', '20/hour'),
         'dashboard_activate': os.environ.get('DASHBOARD_ACTIVATE_THROTTLE_RATE', '10/hour'),
+        'google_login': os.environ.get('GOOGLE_LOGIN_THROTTLE_RATE', '30/hour'),
+        'google_link': os.environ.get('GOOGLE_LINK_THROTTLE_RATE', '10/hour'),
     },
 }
 

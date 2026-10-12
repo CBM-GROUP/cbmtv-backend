@@ -6,7 +6,9 @@ from .serializers import (
     GoogleDirectAuthSerializer,
     CustomTokenObtainPairSerializer,
 )
-from .models import User, RoleChangeLog 
+from .models import User, RoleChangeLog
+from .google_auth import verified_google_identity
+from django.db import IntegrityError, transaction
 from rest_framework import generics, permissions 
 from rest_framework .views import APIView
 from rest_framework .response import Response
@@ -16,6 +18,7 @@ from rest_framework.permissions import IsAdminUser
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework import parsers
+from rest_framework.throttling import ScopedRateThrottle
 
 # Create your views here.
 class RegisterView(generics.CreateAPIView):
@@ -162,38 +165,44 @@ def ListUsersView(request):
     return Response(serializer.data)
 
 
+def google_sign_in_disallowed(user):
+    return (
+        not user.is_active or user.must_change_password or user.dashboard_role_id
+        or user.is_staff or user.is_superuser or user.role in ('admin', 'internal_admin')
+    )
+
+
 class GoogleDirectLoginView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'google_login'
 
     def post(self, request):
         serializer = GoogleDirectAuthSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        name = serializer.validated_data.get('name') or ''
-        email = serializer.validated_data['email']
-        google_id = serializer.validated_data['google_id']
+        subject, email, name = verified_google_identity(serializer.validated_data['id_token'])
 
-        # Find or create user by email
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={
-                'name': name or email.split('@')[0],
-                'phone': '',
-                'location': '',
-                'country': '',
-                'role': 'user',
-                'auth_provider': 'google',
-            }
-        )
+        try:
+            with transaction.atomic():
+                user = User.objects.select_for_update().filter(google_subject=subject).first()
+                created = False
+                if user is None:
+                    # An email match is not proof that this Google account owns
+                    # an existing local or legacy Google account.
+                    if User.objects.filter(email__iexact=email).exists():
+                        return Response({'detail': 'This email already has an account. Sign in with your existing method and link Google.'}, status=status.HTTP_409_CONFLICT)
+                    user = User.objects.create_user(
+                        email=email, name=name or email.split('@')[0], password=None,
+                    )
+                    user.google_subject = subject
+                    user.auth_provider = 'google'
+                    user.save(update_fields=['google_subject', 'auth_provider'])
+                    created = True
+        except IntegrityError:
+            return Response({'detail': 'Account conflict. Please retry.'}, status=status.HTTP_409_CONFLICT)
 
-        # This legacy direct-login path does not verify an upstream Google token.
-        # Never let it issue dashboard or inactive-account credentials.
-        if not user.is_active or user.must_change_password or user.dashboard_role_id or user.is_staff or user.is_superuser:
-            return Response({'detail': 'This account cannot use direct login.'}, status=status.HTTP_403_FORBIDDEN)
-
-        # Ensure provider is google
-        if user.auth_provider != 'google':
-            user.auth_provider = 'google'
-            user.save(update_fields=['auth_provider'])
+        if google_sign_in_disallowed(user):
+            return Response({'detail': 'This account cannot use Google sign-in.'}, status=status.HTTP_403_FORBIDDEN)
 
         # Issue JWT tokens using SimpleJWT
         refresh = RefreshToken.for_user(user)
@@ -214,6 +223,39 @@ class GoogleDirectLoginView(APIView):
                 'image': getattr(user, 'image', None),
             },
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+class GoogleLinkView(APIView):
+    """Explicitly link an existing viewer account after password confirmation."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'google_link'
+
+    def post(self, request):
+        serializer = GoogleDirectAuthSerializer(data={'id_token': request.data.get('id_token')})
+        serializer.is_valid(raise_exception=True)
+        user = request.user
+        if google_sign_in_disallowed(user):
+            return Response({'detail': 'This account cannot link Google.'}, status=status.HTTP_403_FORBIDDEN)
+        password = request.data.get('current_password')
+        if not isinstance(password, str) or not user.check_password(password):
+            return Response({'detail': 'Current password is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        subject, email, _ = verified_google_identity(serializer.validated_data['id_token'])
+        if email.casefold() != user.email.casefold():
+            return Response({'detail': 'Google email must match this account.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            with transaction.atomic():
+                user = User.objects.select_for_update().get(pk=user.pk)
+                if user.google_subject and user.google_subject != subject:
+                    return Response({'detail': 'A different Google account is already linked.'}, status=status.HTTP_409_CONFLICT)
+                if User.objects.filter(google_subject=subject).exclude(pk=user.pk).exists():
+                    return Response({'detail': 'Google account is already linked.'}, status=status.HTTP_409_CONFLICT)
+                user.google_subject = subject
+                user.save(update_fields=['google_subject'])
+        except IntegrityError:
+            return Response({'detail': 'Google account is already linked.'}, status=status.HTTP_409_CONFLICT)
+        return Response({'detail': 'Google account linked.'})
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):

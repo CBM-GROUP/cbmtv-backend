@@ -24,15 +24,11 @@ class RegisterSerializer(serializers.ModelSerializer):
         return user
 
 class GoogleDirectAuthSerializer(serializers.Serializer):
-    name = serializers.CharField(allow_blank=True, required=False)
-    email = serializers.EmailField()
-    google_id = serializers.CharField()
+    id_token = serializers.CharField(trim_whitespace=False)
 
     def validate(self, attrs):
-        if not attrs.get('google_id'):
-            raise serializers.ValidationError({'google_id': 'This field is required.'})
-        if not attrs.get('email'):
-            raise serializers.ValidationError({'email': 'This field is required.'})
+        if set(self.initial_data) != {'id_token'}:
+            raise serializers.ValidationError('Only a Google ID token is accepted.')
         return attrs
 
 class UserProfileSerializer(serializers.ModelSerializer):

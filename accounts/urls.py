@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import RegisterView, profile, AssignAdminRoleView, ListUsersView, GoogleDirectLoginView, CustomTokenObtainPairView, UserUpdateView, ChangePasswordView
+from .views import RegisterView, profile, AssignAdminRoleView, ListUsersView, GoogleDirectLoginView, GoogleLinkView, CustomTokenObtainPairView, UserUpdateView, ChangePasswordView
 from rest_framework_simplejwt.views import TokenRefreshView
 from .serializers import ActiveTokenRefreshSerializer
 from .password_reset import PasswordResetRequestView, PasswordResetConfirmView
@@ -25,6 +25,7 @@ urlpatterns = [
     path('password-reset/', PasswordResetRequestView.as_view(), name='password_reset'),
     path('password-reset/confirm/', PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
     path('login/google/direct/', GoogleDirectLoginView.as_view(), name='google_login_direct'),
+    path('google/link/', GoogleLinkView.as_view(), name='google_link'),
     path('dashboard-activate/', DashboardActivateView.as_view(), name='dashboard-activate'),
     path('dashboard-roles/', DashboardRolesView.as_view(), name='dashboard-roles'),
     path('dashboard-roles/<int:pk>/', DashboardRoleDetailView.as_view(), name='dashboard-role-detail'),
