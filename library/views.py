@@ -19,6 +19,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.pagination import StandardPagination
+from content.publication import PUBLIC_STATUS
 from .models import SavedItem, WatchProgress
 from .serializers import (
     RecordProgressSerializer,
@@ -37,7 +38,7 @@ class SavedListCreateView(generics.ListAPIView):
 
     def get_queryset(self):
         return (
-            SavedItem.objects.filter(user=self.request.user)
+            SavedItem.objects.filter(user=self.request.user, content__status=PUBLIC_STATUS)
             .select_related('content')
             .order_by('-created_at', '-id')
         )
@@ -59,7 +60,7 @@ class SavedIdsView(APIView):
 
     def get(self, request):
         ids = (
-            SavedItem.objects.filter(user=request.user)
+            SavedItem.objects.filter(user=request.user, content__status=PUBLIC_STATUS)
             .order_by('-created_at', '-id')
             .values_list('content_id', flat=True)
         )
@@ -81,7 +82,7 @@ class ProgressListCreateView(generics.ListAPIView):
 
     def get_queryset(self):
         queryset = (
-            WatchProgress.objects.filter(user=self.request.user)
+            WatchProgress.objects.filter(user=self.request.user, content__status=PUBLIC_STATUS)
             .select_related('content')
             .order_by('-updated_at', '-id')
         )

@@ -46,6 +46,8 @@ class MediaStorageTests(APITestCase):
             password="password",
             role="admin",
         )
+        self.user.is_staff = True
+        self.user.save(update_fields=['is_staff'])
 
     def test_route_resolves_to_media_upload_view(self):
         self.assertIs(resolve(self.url).func.view_class, MediaUploadTargetView)
@@ -53,6 +55,18 @@ class MediaStorageTests(APITestCase):
     def test_endpoint_requires_authentication_instead_of_returning_404(self):
         response = self.client.post(self.url, {}, format="json")
         self.assertIn(response.status_code, (401, 403))
+
+    def test_viewer_cannot_request_upload_target(self):
+        viewer = User.objects.create_user(
+            email='viewer@example.com', name='Viewer', password='password',
+        )
+        self.client.force_authenticate(viewer)
+        response = self.client.post(
+            self.url,
+            {'filename': 'poster.jpg', 'content_type': 'image/jpeg', 'media_type': 'image'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 403)
 
     @patch("common.media_storage.boto3.client")
     def test_image_target_is_served_from_s3_not_cloudfront(self, client):
@@ -155,6 +169,8 @@ class PresignExpiryTests(APITestCase):
             location="Kampala",
             country="UG",
         )
+        self.user.is_staff = True
+        self.user.save(update_fields=['is_staff'])
 
     def test_small_file_keeps_the_floor(self):
         self.assertEqual(resolve_presign_ttl(200 * 1024, TEST_STORAGE), 3600)

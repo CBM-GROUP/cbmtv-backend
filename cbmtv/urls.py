@@ -18,6 +18,7 @@ from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from .views import health, root_view
+from .analytics import DashboardAnalyticsView
 
 urlpatterns = [
     path('', root_view, name='root'),
@@ -27,6 +28,7 @@ urlpatterns = [
     path('api/', include('channel.urls')),
     path('api/content/', include('content.urls')),
     path('api/library/', include('library.urls')),
+    path('api/dashboard/analytics/', DashboardAnalyticsView.as_view(), name='dashboard-analytics'),
     
     # Swagger UI
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

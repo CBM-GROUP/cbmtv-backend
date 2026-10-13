@@ -14,11 +14,13 @@ from django.db import transaction
 import os
 from common.media_storage import MediaStorageError, create_upload_target
 from common.pagination import StandardPagination
+from accounts.permissions import HasDashboardSection
+from .publication import PUBLIC_STATUS, HasDashboardMediaAccess, dashboard_scope, visible_queryset
 from .search_sync import SearchUnavailable, get_search_index, content_document, upsert_content, remove_content
 
 
 class MediaUploadTargetView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [HasDashboardMediaAccess]
 
     def post(self, request):
         try:
@@ -49,7 +51,7 @@ def build_search_documents():
     worth *matching* on belong here: everything the client renders is read back
     from the database in `search_view`, never from the index.
     """
-    return [content_document(content) for content in Content.objects.all().order_by('id')]
+    return [content_document(content) for content in Content.objects.filter(status=PUBLIC_STATUS).order_by('id')]
 
 
 def rebuild_search_index():
@@ -101,7 +103,7 @@ def _rank_ordered(ids):
     longer holds simply fall out, which is what turns a stale index into fewer
     results instead of links to the wrong programme.
     """
-    rows = Content.objects.in_bulk(ids)
+    rows = Content.objects.filter(status=PUBLIC_STATUS).in_bulk(ids)
     return [rows[i] for i in ids if i in rows]
 
 
@@ -115,7 +117,7 @@ def _database_search(query, limit):
     work with no index at all.
     """
     return list(
-        Content.objects.filter(
+        Content.objects.filter(status=PUBLIC_STATUS).filter(
             Q(title__icontains=query)
             | Q(genre__icontains=query)
             | Q(description__icontains=query)
@@ -189,13 +191,14 @@ def search_view(request):
 
 
 class ReindexView(APIView):
+    required_section = 'content'
     """
     Rebuild the Meilisearch index from the database.
 
     POST /api/content/reindex/ -- admin only. This is the administrative half of
     the old `search_view`, now behind a write method and a permission check.
     """
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [HasDashboardSection]
 
     def post(self, request):
         try:
@@ -218,6 +221,7 @@ class ReindexView(APIView):
 def content_ids(request):
     """Return content IDs with optional filtering by content type"""
     content_type = request.GET.get('type', None)
+    queryset = Content.objects.all() if dashboard_scope(request) else Content.objects.filter(status=PUBLIC_STATUS)
     
     # Get all available content types from the model choices
     available_types = [choice[0] for choice in Content.CONTENT_TYPES]
@@ -230,7 +234,7 @@ def content_ids(request):
             }, status=400)
         
         # Filter by specific content type
-        content_ids = list(Content.objects.filter(content_type=content_type).values_list('id', flat=True))
+        content_ids = list(queryset.filter(content_type=content_type).values_list('id', flat=True))
         return Response({
             'content_type': content_type,
             'content_ids': content_ids,
@@ -240,14 +244,14 @@ def content_ids(request):
         # Return all content IDs grouped by content type
         result = {}
         for content_type in available_types:
-            ids = list(Content.objects.filter(content_type=content_type).values_list('id', flat=True))
+            ids = list(queryset.filter(content_type=content_type).values_list('id', flat=True))
             result[content_type] = {
                 'ids': ids,
                 'count': len(ids)
             }
         
         # Also include total count
-        total_ids = list(Content.objects.values_list('id', flat=True))
+        total_ids = list(queryset.values_list('id', flat=True))
         result['total'] = {
             'ids': total_ids,
             'count': len(total_ids)
@@ -273,6 +277,7 @@ def parse_bool_param(name, value):
 
 #list all content and create new content
 class ContentListCreateView(generics.ListCreateAPIView):
+    required_section = 'content'
     queryset = Content.objects.all()
     serializer_class = ContentSerializer
     pagination_class = StandardPagination
@@ -295,7 +300,7 @@ class ContentListCreateView(generics.ListCreateAPIView):
         # slicing an unordered one lets the database return a different order per
         # page, so rows repeat or vanish between pages. Django warns about this
         # (UnorderedObjectListWarning) rather than failing.
-        queryset = Content.objects.all().order_by('-id')
+        queryset = visible_queryset(self.request, Content.objects.all()).order_by('-id')
 
         channel_id = self.request.query_params.get('channel')
         if channel_id:
@@ -334,12 +339,16 @@ class ContentListCreateView(generics.ListCreateAPIView):
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 #get, update, delete content
 class ContentDetailView(generics.RetrieveUpdateDestroyAPIView):
+    required_section = 'content'
     queryset = Content.objects.all()
     serializer_class = ContentSerializer
+
+    def get_queryset(self):
+        return visible_queryset(self.request, Content.objects.all())
 
     def perform_update(self, serializer):
         content = serializer.save()
@@ -353,7 +362,7 @@ class ContentDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
     
 
 #movies: creat only
@@ -366,7 +375,7 @@ class MovieListView(generics.ListAPIView):
         # Ordered for the same reason as ContentListCreateView: this view is
         # paginated, and slicing an unordered queryset lets rows repeat or
         # vanish between pages.
-        return Content.objects.filter(content_type='movie').order_by('-id')
+        return visible_queryset(self.request, Content.objects.filter(content_type='movie')).order_by('-id')
 
     def get_permissions(self):
         return [permissions.AllowAny()]
@@ -375,75 +384,88 @@ class MovieListView(generics.ListAPIView):
 
 #create & list seasons
 class SeasonListCreateView(generics.ListCreateAPIView):
+    required_section = 'content'
     queryset = Season.objects.all()
     serializer_class = SeasonSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
 
     def get_queryset(self):
+        queryset = visible_queryset(self.request, Season.objects.all(), 'content__status')
         content_id = self.request.query_params.get('content')
         if content_id:
             # Be tolerant to trailing slashes like ?content=12/
             try:
                 cleaned_id = int(str(content_id).strip('/'))
-                return Season.objects.filter(content_id=cleaned_id).order_by('season_number', 'id')
+                return queryset.filter(content_id=cleaned_id).order_by('season_number', 'id')
             except (TypeError, ValueError):
-                return Season.objects.none()
-        return Season.objects.all().order_by('season_number', 'id')
+                return queryset.none()
+        return queryset.order_by('season_number', 'id')
     
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 #retrieve.update,delete single season
 class SeasonDetailView(generics.RetrieveUpdateDestroyAPIView):
+    required_section = 'content'
     queryset = Season.objects.all()
     serializer_class=SeasonSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_queryset(self):
+        return visible_queryset(self.request, Season.objects.all(), 'content__status')
+
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 class EpisodeListCreateView(generics.ListCreateAPIView):
+    required_section = 'content'
     serializer_class = EpisodeSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
     def get_queryset(self):
+        queryset = visible_queryset(self.request, Episode.objects.all(), 'season__content__status')
         season_id = self.request.query_params.get('season')
         if season_id:
             # Be tolerant to trailing slashes like ?season=5/
             try:
                 cleaned_id = int(str(season_id).strip('/'))
-                return Episode.objects.filter(season_id=cleaned_id).order_by('episode_number', 'id')
+                return queryset.filter(season_id=cleaned_id).order_by('episode_number', 'id')
             except (TypeError, ValueError):
-                return Episode.objects.none()
-        return Episode.objects.all().order_by('season_id', 'episode_number', 'id')
+                return queryset.none()
+        return queryset.order_by('season_id', 'episode_number', 'id')
 
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 
 class EpisodeDetailView(generics.RetrieveUpdateDestroyAPIView):
+    required_section = 'content'
     queryset = Episode.objects.all()
     serializer_class = EpisodeSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_queryset(self):
+        return visible_queryset(self.request, Episode.objects.all(), 'season__content__status')
+
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 
 # adverts
 class HeroSettingsView(APIView):
+    required_section = 'settings'
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
     def get(self, request):
         instance = HeroSettings.objects.filter(pk=1).first() or HeroSettings()
@@ -458,54 +480,62 @@ class HeroSettingsView(APIView):
 
 
 class ContentAdvertListCreateView(generics.ListCreateAPIView):
+    required_section = 'adverts'
     queryset = contentadverts.objects.all()
     serializer_class = ContentAdvertSerializer
 
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 
 class ContentAdvertDetailView(generics.RetrieveUpdateDestroyAPIView):
+    required_section = 'adverts'
     queryset = contentadverts.objects.all()
     serializer_class = ContentAdvertSerializer
 
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 
 class MiniSeriesListCreateView(generics.ListCreateAPIView):
+    required_section = 'content'
     queryset = MiniSeries.objects.all()
     serializer_class = MiniSeriesSerializer
     permission_classes = [permissions.IsAuthenticated]
     
 
     def get_queryset(self):
+        queryset = visible_queryset(self.request, MiniSeries.objects.all(), 'content__status')
         content_id = self.request.query_params.get('content')
         if content_id:
             try:
                 cleaned_id = int(str(content_id).strip('/'))
-                return MiniSeries.objects.filter(content_id=cleaned_id)
+                return queryset.filter(content_id=cleaned_id)
             except (TypeError, ValueError):
-                return MiniSeries.objects.none()
-        return MiniSeries.objects.all()
+                return queryset.none()
+        return queryset
 
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
 
 class MiniSeriesDetailView(generics.RetrieveUpdateDestroyAPIView):
+    required_section = 'content'
     queryset = MiniSeries.objects.all()
     serializer_class = MiniSeriesSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_queryset(self):
+        return visible_queryset(self.request, MiniSeries.objects.all(), 'content__status')
+
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 

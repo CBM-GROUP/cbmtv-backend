@@ -6,10 +6,13 @@ from .models import Channel
 from .serializers import ChannelSerializer
 from content.models import Content
 from content.serializers import ContentSerializer
+from content.publication import visible_queryset
+from accounts.permissions import HasDashboardSection
 
 
 
 class ChannelViewSet(viewsets.ModelViewSet):
+    required_section = 'channels'
     """
     ViewSet for Channels.
     - Lists, retrieves, creates, updates, deletes channels.
@@ -21,7 +24,7 @@ class ChannelViewSet(viewsets.ModelViewSet):
     # (UnorderedObjectListWarning) rather than failing.
     queryset = Channel.objects.all().order_by("name")
     serializer_class = ChannelSerializer
-    permission_classes = [permissions.IsAdminUser]  # Default permissions
+    permission_classes = [HasDashboardSection]  # Default permissions
     pagination_class = StandardPagination
 
     def get_permissions(self):
@@ -30,7 +33,7 @@ class ChannelViewSet(viewsets.ModelViewSet):
         """
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        return [HasDashboardSection()]
 
     @action(
         detail=True,
@@ -44,7 +47,7 @@ class ChannelViewSet(viewsets.ModelViewSet):
         Endpoint: /api/channels/<id>/contents/
         """
         channel = self.get_object()
-        contents_qs = Content.objects.filter(channel=channel).order_by('-id')  # optional ordering
+        contents_qs = visible_queryset(request, Content.objects.filter(channel=channel)).order_by('-id')
 
         # Apply pagination
         page = self.paginate_queryset(contents_qs)

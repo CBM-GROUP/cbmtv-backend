@@ -15,6 +15,7 @@ djangorestframework_simplejwt==5.5.1
 drf-spectacular==0.28.0
 dotenv==0.9.9
 gunicorn==23.0.0
+google-auth==2.41.1
 idna==3.10
 meilisearch==0.37.0
 packaging==25.0
