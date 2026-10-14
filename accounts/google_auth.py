@@ -24,8 +24,10 @@ def verified_google_identity(token):
         claims = google_id_token.verify_oauth2_token(token, Request(), audience=None)
     except ValueError as exc:
         raise AuthenticationFailed('Invalid Google ID token.') from exc
-    except google_exceptions.GoogleAuthError as exc:
+    except google_exceptions.TransportError as exc:
         raise GoogleVerificationUnavailable() from exc
+    except google_exceptions.GoogleAuthError as exc:
+        raise AuthenticationFailed('Invalid Google ID token.') from exc
 
     if claims.get('aud') not in audiences or claims.get('iss') not in (
         'accounts.google.com', 'https://accounts.google.com',
