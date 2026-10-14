@@ -1,6 +1,9 @@
 name: Deploy to AWS EC2
 
 on:
+  push:
+    branches:
+      - master
   workflow_dispatch:
 
 concurrency:
@@ -10,7 +13,7 @@ concurrency:
 jobs:
   deploy:
     name: Deploy to EC2
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/master' && (github.event_name == 'workflow_dispatch' || vars.EC2_AUTO_DEPLOY == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
