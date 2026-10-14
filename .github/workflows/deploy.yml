@@ -1,34 +1,82 @@
 name: Deploy to AWS EC2
 
 on:
-  push:
-    branches:
-      - main
-      - master # In case your default branch is master
+  workflow_dispatch:
+
+concurrency:
+  group: backend-production-deploy
+  cancel-in-progress: false
 
 jobs:
   deploy:
     name: Deploy to EC2
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
-      - name: Execute deployment commands via SSH
+      - name: Deploy verified master revision
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          EC2_APP_DIR: ${{ vars.EC2_APP_DIR }}
+          RELEASE_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           passphrase: ${{ secrets.EC2_PASSPHRASE }}
+          envs: EC2_APP_DIR,RELEASE_SHA
+          command_timeout: 18m
           script: |
-            # Navigate to the project directory (Change this path if needed)
-            cd ~/cbmtv-backend
-            
-            # Pull the latest changes from the repository
-            git pull origin main
-            
-            # Rebuild and restart the containers
-            docker compose -f docker-compose.prod.yml down
-            docker compose -f docker-compose.prod.yml up -d --build
-            
-            # Optional: Clean up unused Docker images to save space
-            docker image prune -f
+            set -eu
+
+            : "${EC2_APP_DIR:?Set the EC2_APP_DIR repository variable to the confirmed absolute application directory}"
+            case "$EC2_APP_DIR" in
+              /*) ;;
+              *) echo "EC2_APP_DIR must be an absolute path" >&2; exit 1 ;;
+            esac
+            [ -d "$EC2_APP_DIR" ] || { echo "EC2_APP_DIR does not exist" >&2; exit 1; }
+            cd "$EC2_APP_DIR"
+            [ "$(git rev-parse --is-inside-work-tree)" = "true" ]
+            [ -z "$(git rev-parse --show-prefix)" ] || { echo "EC2_APP_DIR must be the repository root" >&2; exit 1; }
+            [ "$(git branch --show-current)" = "master" ] || { echo "Expected checked-out master branch" >&2; exit 1; }
+            [ -f docker-compose.prod.yml ] || { echo "Missing docker-compose.prod.yml" >&2; exit 1; }
+            [ -f .env ] || { echo "Missing production .env" >&2; exit 1; }
+            git diff --quiet
+            git diff --cached --quiet
+            docker compose version >/dev/null
+            command -v curl >/dev/null
+            docker compose -f docker-compose.prod.yml config --quiet
+            database="$(docker compose -f docker-compose.prod.yml ps -q postgres)"
+            [ -n "$database" ] || { echo "Production Postgres is not running" >&2; exit 1; }
+            [ "$(docker inspect --format '{{.State.Health.Status}}' "$database")" = "healthy" ] || {
+              echo "Production Postgres is not healthy" >&2
+              exit 1
+            }
+
+            git fetch origin master
+            [ "$(git rev-parse FETCH_HEAD)" = "$RELEASE_SHA" ] || { echo "master moved since this workflow started" >&2; exit 1; }
+            git merge --ff-only "$RELEASE_SHA"
+            [ "$(git rev-parse HEAD)" = "$RELEASE_SHA" ] || { echo "Deployed Git revision mismatch" >&2; exit 1; }
+            docker compose -f docker-compose.prod.yml config --quiet
+
+            # Keep the database and other running services in place.
+            docker compose -f docker-compose.prod.yml up -d --build --no-deps api
+            container="$(docker compose -f docker-compose.prod.yml ps -q api)"
+            [ -n "$container" ] || { echo "API container was not created" >&2; exit 1; }
+            attempt=0
+            health=""
+            while [ "$attempt" -lt 60 ]; do
+              health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")"
+              [ "$health" = "healthy" ] && break
+              [ "$health" != "unhealthy" ] || { echo "API container is unhealthy" >&2; exit 1; }
+              attempt=$((attempt + 1))
+              sleep 5
+            done
+            [ "$health" = "healthy" ] || { echo "API health check timed out" >&2; exit 1; }
+            [ "$(docker inspect --format '{{.Image}}' "$container")" = "$(docker image inspect --format '{{.Id}}' cbmtv-api:prod)" ] || {
+              echo "Running API image does not match the built release image" >&2
+              exit 1
+            }
+            curl --fail --silent --show-error http://127.0.0.1:8000/health/ >/dev/null
+            echo "Deployed and healthy: $RELEASE_SHA"
