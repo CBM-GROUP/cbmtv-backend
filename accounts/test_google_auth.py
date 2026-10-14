@@ -3,7 +3,9 @@ from unittest.mock import patch
 
 from django.test import override_settings
 from django.core.cache import cache
+from google.auth import exceptions as google_exceptions
 from rest_framework.test import APITestCase
+from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 from .models import DashboardRole, User
 
@@ -36,6 +38,11 @@ class GoogleAuthenticationTests(APITestCase):
         self.assertEqual(verify.call_args.args[0], 'google-signed-token')
         self.assertIsNone(verify.call_args.kwargs['audience'])
         user = User.objects.get(email='viewer@example.com')
+        self.assertEqual(str(AccessToken(response.data['access'])['user_id']), str(user.pk))
+        self.assertEqual(str(RefreshToken(response.data['refresh'])['user_id']), str(user.pk))
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['access']}")
+        self.assertEqual(self.client.get('/api/accounts/profile/').status_code, 200)
+        self.client.credentials()
         self.assertEqual(user.google_subject, 'google-subject-1')
         self.assertFalse(user.has_usable_password())
         second, _ = self.google_login(self.claims(email='changed@example.com'))
@@ -57,6 +64,15 @@ class GoogleAuthenticationTests(APITestCase):
         self.assertNotIn('access', response.data)
         self.assertEqual(User.objects.count(), 0)
 
+    def test_google_verifier_rejects_wrong_issuer_and_reports_transport_failure(self):
+        with patch('accounts.google_auth.google_id_token.verify_oauth2_token', side_effect=google_exceptions.GoogleAuthError('wrong issuer')):
+            rejected = self.client.post(self.login_url, {'id_token': 'wrong-issuer'}, format='json')
+        self.assertEqual(rejected.status_code, 401)
+        with patch('accounts.google_auth.google_id_token.verify_oauth2_token', side_effect=google_exceptions.TransportError('certificate fetch failed')):
+            unavailable = self.client.post(self.login_url, {'id_token': 'unverifiable'}, format='json')
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertEqual(User.objects.count(), 0)
+
     def test_expired_wrong_audience_wrong_issuer_unverified_and_missing_subject(self):
         invalid_claims = [
             self.claims(exp=time.time() - 1),
@@ -64,6 +80,9 @@ class GoogleAuthenticationTests(APITestCase):
             self.claims(iss='https://attacker.example'),
             self.claims(email_verified=False),
             self.claims(sub=''),
+            self.claims(email=''),
+            self.claims(email_verified=None),
+            self.claims(exp=None),
         ]
         for claims in invalid_claims:
             with self.subTest(claims=claims):
