@@ -2,8 +2,7 @@
 Seed or update a superadmin account.
 
 Usage:
-    python manage.py seed_superadmin
-    python manage.py seed_superadmin --email admin@example.com --password SecretPassword123!
+    DJANGO_SUPERUSER_EMAIL=admin@example.com DJANGO_SUPERUSER_PASSWORD=... python manage.py seed_superadmin
     python manage.py seed_superadmin --reset-password
 
 Supports environment variables:
@@ -15,25 +14,25 @@ Supports environment variables:
     DJANGO_SUPERUSER_COUNTRY
 """
 import os
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.contrib.auth import get_user_model
 
 
 class Command(BaseCommand):
-    help = "Seeds a superadmin account from arguments or environment variables with safe defaults."
+    help = "Seeds a superadmin account using explicitly supplied credentials."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--email",
             type=str,
             default=None,
-            help="Email address for the superadmin account (default: env DJANGO_SUPERUSER_EMAIL or admin@cbmtv.online)",
+            help="Email address for the superadmin account (or DJANGO_SUPERUSER_EMAIL)",
         )
         parser.add_argument(
             "--password",
             type=str,
             default=None,
-            help="Password for the superadmin account (default: env DJANGO_SUPERUSER_PASSWORD or AdminPass123!)",
+            help="Password for the superadmin account (or DJANGO_SUPERUSER_PASSWORD)",
         )
         parser.add_argument(
             "--name",
@@ -66,21 +65,16 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        email = (options.get("email") or os.environ.get("DJANGO_SUPERUSER_EMAIL") or "admin@cbmtv.online").strip()
-        password = options.get("password") or os.environ.get("DJANGO_SUPERUSER_PASSWORD") or "AdminPass123!"
+        email = (options.get("email") or os.environ.get("DJANGO_SUPERUSER_EMAIL") or "").strip()
+        password = options.get("password") or os.environ.get("DJANGO_SUPERUSER_PASSWORD")
         name = (options.get("name") or os.environ.get("DJANGO_SUPERUSER_NAME") or "CBM TV Super Admin").strip()
         phone = (options.get("phone") or os.environ.get("DJANGO_SUPERUSER_PHONE") or "+256700000000").strip()
         location = (options.get("location") or os.environ.get("DJANGO_SUPERUSER_LOCATION") or "Kampala").strip()
         country = (options.get("country") or os.environ.get("DJANGO_SUPERUSER_COUNTRY") or "Uganda").strip()
         reset_password = options.get("reset_password", False)
 
-        if not email:
-            self.stderr.write(self.style.ERROR("Error: An email address is required."))
-            return
-
-        if not password:
-            self.stderr.write(self.style.ERROR("Error: A password is required."))
-            return
+        if not email or not password:
+            raise CommandError("DJANGO_SUPERUSER_EMAIL and DJANGO_SUPERUSER_PASSWORD are required.")
 
         User = get_user_model()
         user = User.objects.filter(email=email).first()

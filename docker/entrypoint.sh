@@ -5,17 +5,12 @@ if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
     python manage.py migrate --noinput
 fi
 
-# Optional first-boot superuser. Runs only when both vars are set, and NEVER
-# touches an account that already exists -- `createsuperuser --noinput` errors
-# on a duplicate email, and under `set -e` that would crash the container on
-# every boot after the first. This is also why the whole block is `|| echo`:
-# a bootstrap problem must not take the service down.
-#
-# It does not update an existing user's password. Rotate the password in the
-# app, not by editing this env var, and delete DJANGO_SUPERUSER_PASSWORD from
-# the host once the account exists.
+# Bootstrap only with explicit credentials. A failed seed must stop deployment
+# so a missing admin account cannot be mistaken for a successful release.
 if [ "${SEED_SUPERUSER:-true}" = "true" ]; then
-    python manage.py seed_superadmin || echo "superuser bootstrap: skipped (non-fatal)"
+    if [ -n "${DJANGO_SUPERUSER_EMAIL:-}" ] || [ -n "${DJANGO_SUPERUSER_PASSWORD:-}" ]; then
+        python manage.py seed_superadmin
+    fi
 fi
 
 if [ "${COLLECT_STATIC:-true}" = "true" ]; then

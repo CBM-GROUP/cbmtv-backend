@@ -2,6 +2,7 @@ import os
 from io import StringIO
 from unittest.mock import patch
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 
@@ -9,29 +10,36 @@ User = get_user_model()
 
 
 class SeedSuperadminCommandTests(TestCase):
-    def test_seed_superadmin_default_creation(self):
+    @patch.dict(os.environ, {"DJANGO_SUPERUSER_EMAIL": "", "DJANGO_SUPERUSER_PASSWORD": ""})
+    def test_seed_superadmin_requires_explicit_credentials(self):
+        with self.assertRaises(CommandError):
+            call_command("seed_superadmin")
+        self.assertFalse(User.objects.exists())
+
+    @patch.dict(os.environ, {"DJANGO_SUPERUSER_EMAIL": "admin@example.com", "DJANGO_SUPERUSER_PASSWORD": "UniqueTestPassword123!"})
+    def test_seed_superadmin_from_environment(self):
         out = StringIO()
         call_command("seed_superadmin", stdout=out)
 
-        user = User.objects.filter(email="admin@cbmtv.online").first()
-        self.assertIsNotNone(user)
+        user = User.objects.get(email="admin@example.com")
         self.assertTrue(user.is_superuser)
         self.assertTrue(user.is_staff)
         self.assertTrue(user.is_active)
         self.assertEqual(user.role, "admin")
-        self.assertTrue(user.check_password("AdminPass123!"))
+        self.assertTrue(user.check_password("UniqueTestPassword123!"))
         self.assertIn("successfully created", out.getvalue())
 
     def test_seed_superadmin_idempotent(self):
         # Run first time
-        call_command("seed_superadmin")
-        self.assertEqual(User.objects.filter(email="admin@cbmtv.online").count(), 1)
+        call_command("seed_superadmin", email="admin@example.com", password="UniqueTestPassword123!")
+        self.assertEqual(User.objects.filter(email="admin@example.com").count(), 1)
 
         # Run second time without changes
         out = StringIO()
-        call_command("seed_superadmin", stdout=out)
-        self.assertEqual(User.objects.filter(email="admin@cbmtv.online").count(), 1)
+        call_command("seed_superadmin", email="admin@example.com", password="DifferentTestPassword123!", stdout=out)
+        self.assertEqual(User.objects.filter(email="admin@example.com").count(), 1)
         self.assertIn("already exists", out.getvalue())
+        self.assertTrue(User.objects.get(email="admin@example.com").check_password("UniqueTestPassword123!"))
 
     def test_seed_superadmin_custom_credentials(self):
         out = StringIO()
@@ -57,15 +65,15 @@ class SeedSuperadminCommandTests(TestCase):
 
     def test_seed_superadmin_reset_password(self):
         # Create user with initial password
-        call_command("seed_superadmin", email="admin@cbmtv.online", password="OldPassword123!")
-        user = User.objects.get(email="admin@cbmtv.online")
+        call_command("seed_superadmin", email="admin@example.com", password="OldPassword123!")
+        user = User.objects.get(email="admin@example.com")
         self.assertTrue(user.check_password("OldPassword123!"))
 
         # Run with reset_password
         out = StringIO()
         call_command(
             "seed_superadmin",
-            email="admin@cbmtv.online",
+            email="admin@example.com",
             password="NewPassword123!",
             reset_password=True,
             stdout=out,
@@ -89,7 +97,7 @@ class SeedSuperadminCommandTests(TestCase):
 
         # Run command targeting this user
         out = StringIO()
-        call_command("seed_superadmin", email="promoted@cbmtv.online", stdout=out)
+        call_command("seed_superadmin", email="promoted@cbmtv.online", password="UniqueTestPassword123!", stdout=out)
         promoted.refresh_from_db()
         self.assertTrue(promoted.is_superuser)
         self.assertTrue(promoted.is_staff)

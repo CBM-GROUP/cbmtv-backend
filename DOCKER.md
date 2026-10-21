@@ -45,6 +45,15 @@ docker compose exec api python manage.py migrate
 docker compose exec api python manage.py seed_superadmin
 ```
 
+For the EC2 production bootstrap, set `DJANGO_SUPERUSER_EMAIL=admin@cbmtv.online` and
+`DJANGO_SUPERUSER_PASSWORD` in the server's private `.env` before starting
+the API. The startup command creates the account once, or restores its admin
+flags without changing an existing password. No account is created when both
+values are absent; a partially configured pair fails startup. After confirming
+the account can sign in, remove the password from `.env` and set
+`SEED_SUPERUSER=false` so later restarts cannot re-elevate the account.
+Never commit the password or pass it as a command-line argument.
+
 To point a host-side `runserver` at the container's Postgres instead of sqlite,
 set the `DB_*` vars (compose publishes Postgres on 5433 to avoid colliding with
 a local install):
