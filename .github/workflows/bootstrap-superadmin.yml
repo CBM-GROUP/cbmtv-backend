@@ -1,0 +1,30 @@
+name: Bootstrap EC2 superadmin
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rotate and verify the superadmin
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          BOOTSTRAP_PASSWORD: ${{ secrets.CBMTV_TEMP_ADMIN_PASSWORD }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          passphrase: ${{ secrets.EC2_PASSPHRASE }}
+          envs: BOOTSTRAP_PASSWORD
+          script: |
+            set -eu
+            : "${BOOTSTRAP_PASSWORD:?Temporary bootstrap secret is missing}"
+            cd /opt/cbmtv-backend
+            docker compose -f docker-compose.prod.yml exec -T \
+              -e DJANGO_SUPERUSER_EMAIL=admin@cbmtv.online \
+              -e DJANGO_SUPERUSER_PASSWORD="$BOOTSTRAP_PASSWORD" \
+              api python manage.py seed_superadmin --reset-password
+            docker compose -f docker-compose.prod.yml exec -T \
+              -e DJANGO_SUPERUSER_PASSWORD="$BOOTSTRAP_PASSWORD" \
+              api python manage.py shell -c 'import os, sys; from django.contrib.auth import get_user_model; user=get_user_model().objects.filter(email="admin@cbmtv.online").first(); valid=bool(user and user.is_active and user.is_staff and user.is_superuser and user.role=="admin" and user.check_password(os.environ["DJANGO_SUPERUSER_PASSWORD"])); print("superadmin_verified="+str(valid)); sys.exit(0 if valid else 1)'
