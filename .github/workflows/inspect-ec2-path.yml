@@ -1,0 +1,23 @@
+name: Locate EC2 backend checkout
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find backend compose file
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          passphrase: ${{ secrets.EC2_PASSPHRASE }}
+          script: |
+            printf 'Remote home: %s\n' "$HOME"
+            for root in /home /opt /srv /var/www /app; do
+              if [ -d "$root" ]; then
+                find "$root" -maxdepth 5 -type f -name docker-compose.prod.yml -print 2>/dev/null || true
+              fi
+            done
