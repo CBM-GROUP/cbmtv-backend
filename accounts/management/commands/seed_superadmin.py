@@ -2,7 +2,7 @@
 Seed or update a superadmin account.
 
 Usage:
-    DJANGO_SUPERUSER_EMAIL=admin@example.com DJANGO_SUPERUSER_PASSWORD=... python manage.py seed_superadmin
+    DJANGO_SUPERUSER_PASSWORD=... python manage.py seed_superadmin
     python manage.py seed_superadmin --reset-password
 
 Supports environment variables:
@@ -18,15 +18,18 @@ from django.core.management.base import BaseCommand, CommandError
 from django.contrib.auth import get_user_model
 
 
+DEFAULT_SUPERADMIN_EMAIL = "admin@cbmtv.online"
+
+
 class Command(BaseCommand):
-    help = "Seeds a superadmin account using explicitly supplied credentials."
+    help = "Seeds the CBM TV superadmin account using an explicitly supplied password."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--email",
             type=str,
             default=None,
-            help="Email address for the superadmin account (or DJANGO_SUPERUSER_EMAIL)",
+            help="Email address for the superadmin account (default: admin@cbmtv.online)",
         )
         parser.add_argument(
             "--password",
@@ -65,7 +68,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        email = (options.get("email") or os.environ.get("DJANGO_SUPERUSER_EMAIL") or "").strip()
+        email = (options.get("email") or os.environ.get("DJANGO_SUPERUSER_EMAIL") or DEFAULT_SUPERADMIN_EMAIL).strip()
         password = options.get("password") or os.environ.get("DJANGO_SUPERUSER_PASSWORD")
         name = (options.get("name") or os.environ.get("DJANGO_SUPERUSER_NAME") or "CBM TV Super Admin").strip()
         phone = (options.get("phone") or os.environ.get("DJANGO_SUPERUSER_PHONE") or "+256700000000").strip()
@@ -74,7 +77,7 @@ class Command(BaseCommand):
         reset_password = options.get("reset_password", False)
 
         if not email or not password:
-            raise CommandError("DJANGO_SUPERUSER_EMAIL and DJANGO_SUPERUSER_PASSWORD are required.")
+            raise CommandError("A valid superadmin email and password are required.")
 
         User = get_user_model()
         user = User.objects.filter(email=email).first()

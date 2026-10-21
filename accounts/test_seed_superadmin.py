@@ -29,6 +29,13 @@ class SeedSuperadminCommandTests(TestCase):
         self.assertTrue(user.check_password("UniqueTestPassword123!"))
         self.assertIn("successfully created", out.getvalue())
 
+    @patch.dict(os.environ, {"DJANGO_SUPERUSER_EMAIL": "", "DJANGO_SUPERUSER_PASSWORD": "UniqueTestPassword123!"})
+    def test_seed_superadmin_uses_seeded_email(self):
+        call_command("seed_superadmin")
+        user = User.objects.get(email="admin@cbmtv.online")
+        self.assertTrue(user.is_superuser)
+        self.assertTrue(user.check_password("UniqueTestPassword123!"))
+
     def test_seed_superadmin_idempotent(self):
         # Run first time
         call_command("seed_superadmin", email="admin@example.com", password="UniqueTestPassword123!")
