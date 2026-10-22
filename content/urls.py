@@ -4,9 +4,11 @@ from .views import (
     ContentAdvertListCreateView, ContentAdvertDetailView, MiniSeriesListCreateView, MiniSeriesDetailView,
     MediaUploadTargetView, search_view, ReindexView, HeroSettingsView
     )
+from .multipart_views import MultipartVideoUploadView
 
 urlpatterns = [
     path('media/upload-target/', MediaUploadTargetView.as_view(), name='media-upload-target'),
+    path('media/multipart/<str:action>/', MultipartVideoUploadView.as_view(), name='media-multipart-upload'),
     path('', ContentListCreateView.as_view(), name='content-list-create'),
     path('<int:pk>/', ContentDetailView.as_view(), name='content-detail'),
     path('ids/', content_ids, name='content-ids'),
