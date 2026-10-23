@@ -1,4 +1,3 @@
-from rest_framework import permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -9,11 +8,13 @@ from common.multipart_upload import (
     sign_part,
     start_video_upload,
 )
+from .views import MediaUploadTargetView
 
 
 class MultipartVideoUploadView(APIView):
-    # Matches the committed single-PUT upload endpoint's access rule.
-    permission_classes = [permissions.IsAuthenticated]
+    # Keep multipart and single-PUT access identical across dashboard role changes.
+    permission_classes = MediaUploadTargetView.permission_classes
+    required_section = getattr(MediaUploadTargetView, "required_section", None)
 
     def post(self, request, action):
         try:

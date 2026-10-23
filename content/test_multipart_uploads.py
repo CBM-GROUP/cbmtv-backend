@@ -7,10 +7,19 @@ from accounts.models import User
 from common.media_storage import MediaStorageError
 from common.multipart_upload import PART_SIZE, abort_video_upload, finish_video_upload, sign_part, start_video_upload
 from content.test_media_uploads import TEST_STORAGE
+from content.multipart_views import MultipartVideoUploadView
+from content.views import MediaUploadTargetView
 
 
 @override_settings(MEDIA_STORAGE=TEST_STORAGE)
 class MultipartUploadTests(APITestCase):
+    def test_permissions_match_single_put_upload(self):
+        self.assertEqual(MultipartVideoUploadView.permission_classes, MediaUploadTargetView.permission_classes)
+        self.assertEqual(
+            MultipartVideoUploadView.required_section,
+            getattr(MediaUploadTargetView, "required_section", None),
+        )
+
     def setUp(self):
         self.user = User.objects.create_user(
             email="uploader@example.com", password="pw", name="Uploader",
