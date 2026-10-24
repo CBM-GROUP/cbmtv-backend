@@ -1,11 +1,13 @@
 """Verify Google identity on the server before it can affect local accounts."""
 
 from django.conf import settings
+import ssl
 import time
 from google.auth import exceptions as google_exceptions
-from google.auth.transport.requests import Request
+from google.auth.transport.urllib3 import Request
 from google.oauth2 import id_token as google_id_token
 from rest_framework.exceptions import AuthenticationFailed, APIException
+import urllib3
 
 
 class GoogleVerificationUnavailable(APIException):
@@ -21,7 +23,10 @@ def verified_google_identity(token):
     try:
         # google-auth validates signature, expiration and issuer. Audience is
         # checked against our explicit allowlist below to support web/mobile IDs.
-        claims = google_id_token.verify_oauth2_token(token, Request(), audience=None)
+        # Use the operating system trust store so managed TLS roots work
+        # without weakening certificate verification.
+        http = urllib3.PoolManager(ssl_context=ssl.create_default_context())
+        claims = google_id_token.verify_oauth2_token(token, Request(http), audience=None)
     except ValueError as exc:
         raise AuthenticationFailed('Invalid Google ID token.') from exc
     except google_exceptions.TransportError as exc:
