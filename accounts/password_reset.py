@@ -147,7 +147,10 @@ class PasswordResetConfirmView(APIView):
                 )
 
             user.set_password(data['new_password'])
-            user.save(update_fields=['password'])
+            user.must_change_password = False
+            user.temporary_pin_expires_at = None
+            user.temporary_pin_attempts = 0
+            user.save(update_fields=['password', 'must_change_password', 'temporary_pin_expires_at', 'temporary_pin_attempts'])
             reset.used = True
             reset.save(update_fields=['used'])
 

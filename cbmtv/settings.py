@@ -221,6 +221,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'password_reset': os.environ.get('PASSWORD_RESET_THROTTLE_RATE', '5/hour'),
         'password_reset_confirm': os.environ.get('PASSWORD_RESET_CONFIRM_THROTTLE_RATE', '20/hour'),
+        'dashboard_activate': os.environ.get('DASHBOARD_ACTIVATE_THROTTLE_RATE', '10/hour'),
     },
 }
 
@@ -408,6 +409,7 @@ EMAIL_USE_TLS = env_bool('EMAIL_USE_TLS', True)
 DEFAULT_FROM_EMAIL = os.environ.get(
     'DEFAULT_FROM_EMAIL', 'CBM TV <no-reply@cbmgroupco.com>'
 )
+DASHBOARD_URL = os.environ.get('DASHBOARD_URL', 'https://cbmtv-dashboard-five.vercel.app')
 
 # How long an emailed password-reset code stays valid.
 PASSWORD_RESET_CODE_TTL_MINUTES = int(

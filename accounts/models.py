@@ -4,6 +4,14 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 
 
 # Create your models here.
+class DashboardRole(models.Model):
+    name = models.CharField(max_length=80, unique=True)
+    permissions = models.JSONField(default=list)
+
+    def __str__(self):
+        return self.name
+
+
 class UserManager(BaseUserManager):
     # phone/location/country default to None because they are optional on the
     # model (blank=True, null=True), which makes them optional in
@@ -65,6 +73,10 @@ class User (AbstractBaseUser, PermissionsMixin):
     country = models.CharField(max_length=100,blank=True, null=True)
     image = models.URLField(max_length=255, blank=True, null=True)
     role = models.CharField(max_length=15, choices=ROLE_CHOICES, default='user')
+    dashboard_role = models.ForeignKey(DashboardRole, null=True, blank=True, on_delete=models.SET_NULL)
+    must_change_password = models.BooleanField(default=False)
+    temporary_pin_expires_at = models.DateTimeField(null=True, blank=True)
+    temporary_pin_attempts = models.PositiveSmallIntegerField(default=0)
     auth_provider = models.CharField(max_length=20, choices=AUTH_PROVIDER_CHOICES, default='local')
 
 

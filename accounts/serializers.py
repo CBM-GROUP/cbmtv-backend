@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import User
+from .models import DashboardRole
+from .permissions import DASHBOARD_SECTIONS, dashboard_permissions
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
@@ -33,28 +35,65 @@ class GoogleDirectAuthSerializer(serializers.Serializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     image = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    dashboard_role_name = serializers.CharField(source='dashboard_role.name', read_only=True, default=None)
+    dashboard_permissions = serializers.SerializerMethodField()
+
+    def get_dashboard_permissions(self, obj):
+        return dashboard_permissions(obj)
 
     class Meta:
         model =User
-        fields = ['id', 'email', 'name', 'phone', 'location', 'country', 'image', 'role', 'auth_provider', 'is_staff', 'is_superuser']
+        fields = ['id', 'email', 'name', 'phone', 'location', 'country', 'image', 'role', 'auth_provider', 'is_staff', 'is_superuser', 'dashboard_role', 'dashboard_role_name', 'dashboard_permissions', 'must_change_password']
 
 
 class UserSerializer(serializers.ModelSerializer):
     username = serializers.SerializerMethodField()
+    dashboard_role_name = serializers.CharField(source='dashboard_role.name', read_only=True, default=None)
+    dashboard_permissions = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'name', 'phone', 'location', 'country', 'image', 'role', 'auth_provider', 'is_staff', 'is_superuser']
+        fields = ['id', 'username', 'email', 'name', 'phone', 'location', 'country', 'image', 'role', 'auth_provider', 'is_staff', 'is_superuser', 'dashboard_role', 'dashboard_role_name', 'dashboard_permissions', 'must_change_password']
 
     def get_username(self, obj):
         # Map username to display name field in our model
         return getattr(obj, 'name', obj.email)
+
+    def get_dashboard_permissions(self, obj):
+        return dashboard_permissions(obj)
+
+
+class DashboardRoleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DashboardRole
+        fields = ['id', 'name', 'permissions']
+
+    def validate_permissions(self, value):
+        if not isinstance(value, list) or any(not isinstance(item, str) or item not in DASHBOARD_SECTIONS for item in value):
+            raise serializers.ValidationError('Choose valid dashboard sections.')
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError('Each permission may be selected once.')
+        return value
+
+
+class DashboardInviteSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=100)
+    email = serializers.EmailField()
+    dashboard_role = serializers.PrimaryKeyRelatedField(queryset=DashboardRole.objects.all())
+
+    def validate_email(self, value):
+        if User.objects.filter(email__iexact=value.strip()).exists():
+            raise serializers.ValidationError('An account with this email already exists.')
+        return value.strip()
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
         user: User = self.user
+
+        if user.must_change_password:
+            raise serializers.ValidationError({'detail': 'Activate your dashboard account with the temporary PIN before signing in.', 'code': 'activation_required'})
 
         data['user'] = {
             'id': user.id,
@@ -64,5 +103,10 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'location': getattr(user, 'location', ''),
             'country': getattr(user, 'country', ''),
             'image': getattr(user, 'image', None),
+            'role': user.role,
+            'is_staff': user.is_staff,
+            'is_superuser': user.is_superuser,
+            'dashboard_permissions': dashboard_permissions(user),
+            'dashboard_role': user.dashboard_role_id,
         }
         return data

@@ -46,6 +46,9 @@ class UserUpdateView(APIView):
         except User.DoesNotExist:
             return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        if target_user.pk != request.user.pk:
+            return Response({"detail": "You can only edit your own profile."}, status=status.HTTP_403_FORBIDDEN)
+
         # Allow any authenticated user to edit profile fields by user id
         data = request.data.copy()
         allowed_fields = {"name", "phone", "location", "country", "image", "email"}
@@ -71,6 +74,9 @@ class ChangePasswordView(APIView):
             target_user = User.objects.get(pk=pk)
         except User.DoesNotExist:
             return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if target_user.pk != request.user.pk:
+            return Response({"detail": "You can only change your own password."}, status=status.HTTP_403_FORBIDDEN)
 
         current_password = request.data.get('current_password', '')
         new_password = request.data.get('new_password', '')
