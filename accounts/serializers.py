@@ -5,6 +5,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .models import User
 from .models import DashboardRole
 from .permissions import DASHBOARD_SECTIONS, dashboard_permissions
+from .email_identity import email_identity_guard, unique_email_user
+from rest_framework.exceptions import AuthenticationFailed
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
@@ -14,13 +16,17 @@ class RegisterSerializer(serializers.ModelSerializer):
         model = User
         fields = ['email', 'name', 'phone', 'location', 'country', 'password', 'image']
 
+    def validate_email(self, value):
+        value = value.strip()
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError('Unable to register with this email.')
+        return value
+
     def create(self, validated_data):
         image = validated_data.pop('image', None)
-        user = User.objects.create_user(
-            **validated_data,
-            image=image,
-            role='user'
-        )
+        with email_identity_guard(validated_data['email']):
+            self.validate_email(validated_data['email'])
+            user = User.objects.create_user(**validated_data, image=image, role='user')
         return user
 
 class GoogleDirectAuthSerializer(serializers.Serializer):
@@ -54,6 +60,13 @@ class UserProfileSerializer(serializers.ModelSerializer):
         if User.objects.filter(email__iexact=value.strip()).exclude(pk=getattr(self.instance, 'pk', None)).exists():
             raise serializers.ValidationError('An account with this email already exists.')
         return value.strip()
+
+    def update(self, instance, validated_data):
+        if 'email' not in validated_data:
+            return super().update(instance, validated_data)
+        with email_identity_guard(validated_data['email']):
+            self.validate_email(validated_data['email'])
+            return super().update(instance, validated_data)
 
     class Meta:
         model =User
@@ -104,6 +117,13 @@ class DashboardInviteSerializer(serializers.Serializer):
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
+        user = unique_email_user(attrs.get('email', ''))
+        if user is None:
+            # Match Django's missing-user password work; neither a collision
+            # nor an absent email should reveal account state or select a user.
+            User().set_password(attrs.get('password', ''))
+            raise AuthenticationFailed(self.error_messages['no_active_account'], code='no_active_account')
+        attrs = {**attrs, 'email': user.email}
         data = super().validate(attrs)
         user: User = self.user
 

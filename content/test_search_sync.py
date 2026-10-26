@@ -96,6 +96,10 @@ class ContentSearchSyncTests(TestCase):
                 }, format='json')
             self.assertEqual(created.status_code, 201)
             content_id = created.data['id']
+            self.assertEqual(created.data['status'], 'preview')
+            with self.captureOnCommitCallbacks(execute=True):
+                approved = self.client.patch(f'/api/content/{content_id}/', {'status': 'approved'}, format='json')
+            self.assertEqual(approved.status_code, 200)
             first = self.client.get('/api/content/search/', {'q': 'Mobile search fixture'})
             self.assertEqual(first.data['source'], 'meilisearch')
             self.assertEqual(first.data['hits'][0]['id'], content_id)

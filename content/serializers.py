@@ -1,7 +1,47 @@
 from rest_framework import serializers
+from django.db import transaction
+import logging
+from common.idempotency import OperationConflict
 from .models import Content, Season, Episode, contentadverts, MiniSeries, HeroSettings
+from .publication import can_read_dashboard_content
 
 class ContentSerializer(serializers.ModelSerializer):
+    def update(self, instance, validated_data):
+        # Reload under the lock: DRF may have fetched this instance before an
+        # overlapping editorial transition committed. Never save stale status.
+        with transaction.atomic():
+            current = Content.objects.select_for_update().get(pk=instance.pk)
+            previous_status = current.status
+            request = self.context.get('request')
+            expected = request.headers.get('If-Publication-Status') if request else None
+            if 'status' in validated_data and expected is not None and expected != previous_status:
+                raise OperationConflict('Publication status changed. Refresh before trying again.')
+            content = super().update(current, validated_data)
+            if content.status != previous_status:
+                actor_id = request.user.pk if request else None
+                content_id, new_status = content.pk, content.status
+                transaction.on_commit(lambda: logging.getLogger('content.publication').info(
+                    'Publication changed actor_id=%s content_id=%s from=%s to=%s',
+                    actor_id, content_id, previous_status, new_status,
+                ))
+            return content
+
+    def create(self, validated_data):
+        # Status changes belong to an explicit edit after creation. This also
+        # protects non-dashboard API clients that submit an approved status.
+        return super().create({**validated_data, 'status': 'preview'})
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if not (request and can_read_dashboard_content(request.user) and (
+            request.method not in ('GET', 'HEAD', 'OPTIONS') or request.query_params.get('scope') == 'dashboard'
+        )):
+            # Keep the existing nullable key for old clients; technical byte
+            # counts are only useful in the authorized management experience.
+            data['size'] = None
+        return data
+
     class Meta:
         model = Content
         fields = '__all__'

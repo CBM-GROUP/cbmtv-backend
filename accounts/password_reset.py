@@ -25,6 +25,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from .models import PasswordResetCode, User
+from .email_identity import unique_email_user
 
 REQUEST_ACCEPTED = "If an account exists for that email, a reset code has been sent."
 INVALID_CODE = "Invalid or expired code."
@@ -36,7 +37,8 @@ def generate_code():
 
 
 def _find_active_user(email):
-    return User.objects.filter(email__iexact=email.strip(), is_active=True, must_change_password=False).first()
+    user = unique_email_user(email)
+    return user if user and user.is_active and not user.must_change_password else None
 
 
 def issue_reset_code(user):

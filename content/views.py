@@ -12,9 +12,11 @@ from django.http import JsonResponse
 from django.db.models import Q
 from django.db import transaction
 import os
+import logging
 from common.media_storage import MediaStorageError, create_upload_target
 from common.pagination import StandardPagination
 from accounts.permissions import HasDashboardSection
+from common.idempotency import IdempotentCreateMixin
 from .publication import PUBLIC_STATUS, HasDashboardMediaAccess, dashboard_scope, visible_queryset
 from .search_sync import SearchUnavailable, get_search_index, content_document, upsert_content, remove_content
 
@@ -276,7 +278,7 @@ def parse_bool_param(name, value):
 
 
 #list all content and create new content
-class ContentListCreateView(generics.ListCreateAPIView):
+class ContentListCreateView(IdempotentCreateMixin, generics.ListCreateAPIView):
     required_section = 'content'
     queryset = Content.objects.all()
     serializer_class = ContentSerializer
@@ -421,7 +423,7 @@ class SeasonDetailView(generics.RetrieveUpdateDestroyAPIView):
             return [permissions.AllowAny()]
         return [HasDashboardSection()]
 
-class EpisodeListCreateView(generics.ListCreateAPIView):
+class EpisodeListCreateView(IdempotentCreateMixin, generics.ListCreateAPIView):
     required_section = 'content'
     serializer_class = EpisodeSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -479,7 +481,7 @@ class HeroSettingsView(APIView):
         return Response(serializer.data)
 
 
-class ContentAdvertListCreateView(generics.ListCreateAPIView):
+class ContentAdvertListCreateView(IdempotentCreateMixin, generics.ListCreateAPIView):
     required_section = 'adverts'
     queryset = contentadverts.objects.all()
     serializer_class = ContentAdvertSerializer
@@ -501,7 +503,7 @@ class ContentAdvertDetailView(generics.RetrieveUpdateDestroyAPIView):
         return [HasDashboardSection()]
 
 
-class MiniSeriesListCreateView(generics.ListCreateAPIView):
+class MiniSeriesListCreateView(IdempotentCreateMixin, generics.ListCreateAPIView):
     required_section = 'content'
     queryset = MiniSeries.objects.all()
     serializer_class = MiniSeriesSerializer
