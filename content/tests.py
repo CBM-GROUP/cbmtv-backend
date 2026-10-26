@@ -105,7 +105,7 @@ class ContentUpdatePermissionsTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         created = Content.objects.get(title="CloudFront Movie")
-        self.assertEqual(created.status, "comingsoon")
+        self.assertEqual(created.status, "preview")
         self.assertEqual(created.thumbnail, payload["thumbnail"])
         self.assertEqual(created.streaming_link, payload["streaming_link"])
         self.assertEqual(created.trailer_link, payload["trailer_link"])

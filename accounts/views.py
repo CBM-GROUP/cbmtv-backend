@@ -8,6 +8,8 @@ from .serializers import (
 )
 from .models import User, RoleChangeLog
 from .google_auth import verified_google_identity
+from .email_identity import email_identity_guard, unique_email_user
+from .throttles import PasswordLoginThrottle
 from django.db import IntegrityError, transaction
 from rest_framework import generics, permissions 
 from rest_framework .views import APIView
@@ -183,8 +185,10 @@ class GoogleDirectLoginView(APIView):
         subject, email, name = verified_google_identity(serializer.validated_data['id_token'])
 
         try:
-            with transaction.atomic():
-                user = User.objects.select_for_update().filter(google_subject=subject).first()
+            with email_identity_guard(email):
+                # Existing subjects are read-only here. Avoid taking row locks
+                # after the email lock: profile edits may already own that row.
+                user = User.objects.filter(google_subject=subject).first()
                 created = False
                 if user is None:
                     # An email match is not proof that this Google account owns
@@ -242,7 +246,8 @@ class GoogleLinkView(APIView):
         if not isinstance(password, str) or not user.check_password(password):
             return Response({'detail': 'Current password is required.'}, status=status.HTTP_400_BAD_REQUEST)
         subject, email, _ = verified_google_identity(serializer.validated_data['id_token'])
-        if email.casefold() != user.email.casefold():
+        matched_user = unique_email_user(email)
+        if email.casefold() != user.email.casefold() or matched_user is None or matched_user.pk != user.pk:
             return Response({'detail': 'Google email must match this account.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             with transaction.atomic():
@@ -260,3 +265,5 @@ class GoogleLinkView(APIView):
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+    throttle_classes = [PasswordLoginThrottle]
+    throttle_scope = 'password_login'

@@ -30,6 +30,8 @@ def env_list(name, default=None):
 
 
 GOOGLE_OAUTH_CLIENT_IDS = env_list('GOOGLE_OAUTH_CLIENT_IDS')
+PASSWORD_LOGIN_NUM_PROXIES = max(0, int(os.environ.get('PASSWORD_LOGIN_NUM_PROXIES', '0')))
+PASSWORD_LOGIN_TRUSTED_PROXY_IPS = env_list('PASSWORD_LOGIN_TRUSTED_PROXY_IPS')
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -208,6 +210,9 @@ INSTALLED_APPS = [
 
 CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", False)
 CORS_ALLOW_CREDENTIALS = True
+from corsheaders.defaults import default_headers
+CORS_ALLOW_HEADERS = (*default_headers, 'idempotency-key', 'if-publication-status')
+CORS_EXPOSE_HEADERS = ['Idempotency-Key', 'Idempotency-Replayed', 'Idempotency-Supported', 'Retry-After']
 
 AUTH_USER_MODEL = 'accounts.User'
 
@@ -222,6 +227,7 @@ REST_FRAMEWORK = {
     # per client IP to stop them being used to spam an inbox or brute-force a
     # six-digit code.
     'DEFAULT_THROTTLE_RATES': {
+        'password_login': os.environ.get('PASSWORD_LOGIN_THROTTLE_RATE', '30/minute'),
         'password_reset': os.environ.get('PASSWORD_RESET_THROTTLE_RATE', '5/hour'),
         'password_reset_confirm': os.environ.get('PASSWORD_RESET_CONFIRM_THROTTLE_RATE', '20/hour'),
         'dashboard_activate': os.environ.get('DASHBOARD_ACTIVATE_THROTTLE_RATE', '10/hour'),

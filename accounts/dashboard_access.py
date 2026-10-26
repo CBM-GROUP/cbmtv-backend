@@ -13,6 +13,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from .models import DashboardRole, User
+from .email_identity import email_identity_guard
 from .permissions import IsDashboardSuperuser, HasDashboardSection, dashboard_permissions
 from .serializers import DashboardInviteSerializer, DashboardRoleSerializer, UserProfileSerializer
 
@@ -116,7 +117,8 @@ class DashboardUsersView(APIView):
         role = serializer.validated_data['dashboard_role']
         if not may_assign_role(request.user, role):
             return Response({'detail': 'You cannot assign permissions you do not have.'}, status=status.HTTP_403_FORBIDDEN)
-        with transaction.atomic():
+        with email_identity_guard(serializer.validated_data['email']):
+            serializer.validate_email(serializer.validated_data['email'])
             user = User.objects.create_user(
                 email=serializer.validated_data['email'],
                 name=serializer.validated_data['name'],
@@ -213,9 +215,10 @@ class DashboardActivateView(APIView):
         data = serializer.validated_data
         invalid = Response({'detail': INVALID_PIN}, status=status.HTTP_400_BAD_REQUEST)
 
-        with transaction.atomic():
-            user = User.objects.select_for_update().filter(email__iexact=data['email'].strip(), is_active=True).first()
-            if user is None or not user.dashboard_role_id or not user.must_change_password:
+        with email_identity_guard(data['email']):
+            matches = list(User.objects.select_for_update().filter(email__iexact=data['email'].strip()).order_by('pk')[:2])
+            user = matches[0] if len(matches) == 1 else None
+            if user is None or not user.is_active or not user.dashboard_role_id or not user.must_change_password:
                 return invalid
             if not user.temporary_pin_expires_at or user.temporary_pin_expires_at <= timezone.now() or user.temporary_pin_attempts >= 5:
                 return invalid

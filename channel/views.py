@@ -8,10 +8,11 @@ from content.models import Content
 from content.serializers import ContentSerializer
 from content.publication import visible_queryset
 from accounts.permissions import HasDashboardSection
+from common.idempotency import IdempotentCreateMixin
 
 
 
-class ChannelViewSet(viewsets.ModelViewSet):
+class ChannelViewSet(IdempotentCreateMixin, viewsets.ModelViewSet):
     required_section = 'channels'
     """
     ViewSet for Channels.
