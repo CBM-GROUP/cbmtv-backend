@@ -64,7 +64,7 @@ jobs:
             docker compose -f docker-compose.prod.yml config --quiet
 
             # Keep the database and other running services in place.
-            docker compose -f docker-compose.prod.yml up -d --build --no-deps api
+            docker compose -f docker-compose.prod.yml up -d --build --force-recreate --no-deps api
             container="$(docker compose -f docker-compose.prod.yml ps -q api)"
             [ -n "$container" ] || { echo "API container was not created" >&2; exit 1; }
             attempt=0
