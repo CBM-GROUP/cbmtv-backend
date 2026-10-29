@@ -87,13 +87,17 @@ def _hit_ids(raw_hits):
     the index is external state and may hold documents from an older schema.
     """
     ids = []
+    seen = set()
     for hit in raw_hits:
         if not isinstance(hit, dict):
             continue
         try:
-            ids.append(int(hit.get('id')))
+            content_id = int(hit.get('id'))
         except (TypeError, ValueError):
             continue
+        if content_id > 0 and content_id not in seen:
+            seen.add(content_id)
+            ids.append(content_id)
     return ids
 
 
@@ -109,22 +113,35 @@ def _rank_ordered(ids):
     return [rows[i] for i in ids if i in rows]
 
 
-def _database_search(query, limit):
-    """
-    Search the database directly.
+def _database_matches(query):
+    """Authoritative public matches, including records absent from the index.
 
-    The fallback for whenever Meilisearch cannot answer -- unconfigured,
-    erroring, or holding an index so stale that nothing it ranked still exists.
-    `icontains` is case-insensitive and matches substrings, so partial titles
-    work with no index at all.
+    Each query word may match a different public metadata field. This supplements
+    Meilisearch rather than replacing its relevance and typo matching. Keep this
+    as a queryset so continuation pages never serialize the entire catalogue.
     """
-    return list(
-        Content.objects.filter(status=PUBLIC_STATUS).filter(
-            Q(title__icontains=query)
-            | Q(genre__icontains=query)
-            | Q(description__icontains=query)
-        ).order_by('-created_at', '-id')[:limit]
-    )
+    fields = ('title', 'genre', 'description', 'channel__name',
+              'director', 'writer', 'country', 'content_type')
+    aliases = {
+        'movies': ('movie',), 'movie': ('movie',),
+        'tv shows': ('original', 'series', 'miniseries'),
+        'tv show': ('original', 'series', 'miniseries'),
+        'series': ('series', 'miniseries'),
+        'documentaries': ('documentary',), 'documentary': ('documentary',),
+        'animations': ('animations',), 'animation': ('animations',),
+    }
+    predicate = Q()
+    for term in query.split():
+        term_match = Q()
+        for field in fields:
+            term_match |= Q(**{f'{field}__icontains': term})
+        if term.lower() in aliases:
+            term_match |= Q(content_type__in=aliases[term.lower()])
+        predicate &= term_match
+    category = aliases.get(query.lower())
+    if category:
+        predicate |= Q(content_type__in=category)
+    return Content.objects.filter(status=PUBLIC_STATUS).filter(predicate).order_by('-created_at', '-id')
 
 
 @api_view(['GET'])
@@ -133,7 +150,7 @@ def search_view(request):
     """
     Read-only search over the content catalogue.
 
-    GET /api/content/search/?q=<term>&limit=<n>
+    GET /api/content/search/?q=<term>&limit=<page size>&offset=<continuation>
 
     Meilisearch ranks; the database decides what actually comes back. Hits are
     hydrated by id through `_rank_ordered`, so an index holding rows that no
@@ -142,9 +159,12 @@ def search_view(request):
     documents from an unrelated dataset, one of which resolved to a different
     programme entirely.
 
-    When Meilisearch cannot answer -- unconfigured, unreachable, or stale enough
-    that nothing it ranked survived hydration -- this falls back to a database
-    `icontains` search instead of failing. `source` reports which path answered.
+    Current database matches always supplement the ranked index IDs. Exact titles
+    come first, then Meilisearch's order, then additional public metadata matches.
+    Index outages still leave the complete database matching path available.
+    `count` remains the returned page size for existing callers; `total` and
+    `next_offset` allow the existing popup to reach further pages. No index writes
+    or new publication/access rules are performed by this read endpoint.
 
     This endpoint previously DELETED the entire index and rebuilt it from the
     database, on an unauthenticated GET, despite being named `search`. Any
@@ -154,41 +174,64 @@ def search_view(request):
     """
     query = (request.query_params.get('q') or '').strip()
     if not query:
-        return Response({'query': '', 'count': 0, 'hits': [], 'source': 'none'})
+        return Response({'query': '', 'count': 0, 'hits': [], 'source': 'none',
+                         'total': 0, 'offset': 0, 'next_offset': None})
 
     try:
         limit = int(request.query_params.get('limit') or 20)
     except (TypeError, ValueError):
         limit = 20
     limit = max(1, min(limit, 100))
+    try:
+        offset = int(request.query_params.get('offset') or 0)
+        if offset < 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return Response({'offset': 'Use a non-negative integer.'}, status=400)
 
-    source = 'meilisearch'
-    rows = []
+    published = Content.objects.filter(status=PUBLIC_STATUS)
+    ranked_ids = []
 
     try:
         index = get_search_index()
-        result = index.search(query, {'limit': limit})
+        # Request ranked IDs across this catalogue, not just the visible page.
+        # Missing/stale index records cannot cap the database match set below.
+        result = index.search(query, {
+            'limit': max(limit, published.count()),
+            'attributesToRetrieve': ['id'],
+        })
         raw_hits = result.get('hits', []) if isinstance(result, dict) else []
-        rows = _rank_ordered(_hit_ids(raw_hits))
+        ids = _hit_ids(raw_hits)
+        eligible = set(published.filter(pk__in=ids).values_list('pk', flat=True))
+        ranked_ids = [content_id for content_id in ids if content_id in eligible]
     except SearchUnavailable:
-        source = 'database'
+        pass
     except Exception:
         # Unreachable or erroring Meilisearch. Search degrades; it does not 502.
-        source = 'database'
+        pass
 
-    if not rows:
-        # Covers an empty index, an index stale enough that hydration dropped
-        # every hit, and a genuinely unmatched query. The database is cheap
-        # here and settles all three.
-        rows = _database_search(query, limit)
-        source = 'database'
+    # An exact title must remain findable even when the index returns weaker
+    # matches. Supplement partial index responses, not only completely empty ones.
+    exact_ids = list(published.filter(title__iexact=query).order_by('-created_at', '-id').values_list('pk', flat=True))
+    head_ids = list(dict.fromkeys(exact_ids + ranked_ids))
+    remaining = _database_matches(query).exclude(pk__in=head_ids)
+    total = len(head_ids) + remaining.count()
+    rows = []
+    if offset < total:
+        rows = _rank_ordered(head_ids[offset:offset + limit])
+        if len(rows) < limit:
+            tail_offset = max(0, offset - len(head_ids))
+            rows.extend(remaining[tail_offset:tail_offset + limit - len(rows)])
 
     hits = ContentSerializer(rows, many=True).data
     return Response({
         'query': query,
         'count': len(hits),
         'hits': hits,
-        'source': source,
+        'source': 'meilisearch' if ranked_ids else 'database',
+        'total': total,
+        'offset': offset,
+        'next_offset': offset + len(hits) if offset + len(hits) < total else None,
     })
 
 
