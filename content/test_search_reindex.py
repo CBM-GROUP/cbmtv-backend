@@ -105,22 +105,22 @@ class SearchViewTests(SearchReindexTestBase):
     def test_search_limit_is_passed_through_and_capped(self):
         index = self.make_index()
         with patch('content.views.get_search_index', return_value=index):
-            self.client.get(self.search_url, {'q': 'x', 'limit': '5'})
+            self.client.get(self.search_url, {'q': 'indexonlytoken', 'limit': '5'})
         self.assertEqual(index.search.call_args[0][1]['limit'], 5)
 
         index = self.make_index()
         with patch('content.views.get_search_index', return_value=index):
-            self.client.get(self.search_url, {'q': 'x', 'limit': '100000'})
+            self.client.get(self.search_url, {'q': 'indexonlytoken', 'limit': '100000'})
         self.assertEqual(index.search.call_args[0][1]['limit'], 100)
 
         index = self.make_index()
         with patch('content.views.get_search_index', return_value=index):
-            self.client.get(self.search_url, {'q': 'x', 'limit': 'abc'})
+            self.client.get(self.search_url, {'q': 'indexonlytoken', 'limit': 'abc'})
         self.assertEqual(index.search.call_args[0][1]['limit'], 20)
 
     def test_search_post_is_not_allowed(self):
         """Searching is a read. Writes belong to the reindex route."""
-        response = self.client.post(self.search_url, {'q': 'x'}, format='json')
+        response = self.client.post(self.search_url, {'q': 'indexonlytoken'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
     def test_unconfigured_meilisearch_falls_back_to_the_database(self):
@@ -186,7 +186,7 @@ class SearchHydrationTests(SearchReindexTestBase):
         ])
 
         with patch('content.views.get_search_index', return_value=index):
-            response = self.client.get(self.search_url, {'q': 'x'})
+            response = self.client.get(self.search_url, {'q': 'indexonlytoken'})
 
         self.assertEqual(response.data['count'], 1)
         self.assertEqual([h['id'] for h in response.data['hits']], [self.dija.id])
@@ -198,7 +198,7 @@ class SearchHydrationTests(SearchReindexTestBase):
         """
         index = self.make_index(hits=[{'id': self.series.id}, {'id': self.dija.id}])
         with patch('content.views.get_search_index', return_value=index):
-            forward = self.client.get(self.search_url, {'q': 'x'})
+            forward = self.client.get(self.search_url, {'q': 'indexonlytoken'})
         self.assertEqual(
             [h['id'] for h in forward.data['hits']],
             [self.series.id, self.dija.id],
@@ -206,7 +206,7 @@ class SearchHydrationTests(SearchReindexTestBase):
 
         index = self.make_index(hits=[{'id': self.dija.id}, {'id': self.series.id}])
         with patch('content.views.get_search_index', return_value=index):
-            reverse = self.client.get(self.search_url, {'q': 'x'})
+            reverse = self.client.get(self.search_url, {'q': 'indexonlytoken'})
         self.assertEqual(
             [h['id'] for h in reverse.data['hits']],
             [self.dija.id, self.series.id],
@@ -248,7 +248,7 @@ class SearchHydrationTests(SearchReindexTestBase):
         ])
 
         with patch('content.views.get_search_index', return_value=index):
-            response = self.client.get(self.search_url, {'q': 'x'})
+            response = self.client.get(self.search_url, {'q': 'indexonlytoken'})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual([h['id'] for h in response.data['hits']], [self.dija.id])
