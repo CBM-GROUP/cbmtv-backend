@@ -64,12 +64,17 @@ jobs:
             try:
                 stats = get('/stats')
             except requests.HTTPError as exc:
+                local_status = requests.get(
+                    f'http://meilisearch:7700/indexes/{quote(uid, safe="")}/stats',
+                    headers=headers, timeout=10,
+                ).status_code
                 print(json.dumps({
                     'index': uid,
-                    'meilisearch_host': urlparse(base).hostname,
+                    'configured_target_is_local': urlparse(base).hostname in ('meilisearch', 'localhost', '127.0.0.1'),
                     'approved_database_count': len(approved),
                     'configured_key_present': bool(settings.MEILISEARCH_MASTER_KEY),
                     'stats_http_status': exc.response.status_code,
+                    'local_stats_http_status': local_status,
                 }, sort_keys=True))
                 raise SystemExit(0)
             config = get('/settings')
