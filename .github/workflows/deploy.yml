@@ -37,7 +37,9 @@ jobs:
             set -eu
             cd "$EC2_APP_DIR"
             git rev-parse HEAD
+            git reflog -5 --format='%h %gs'
             docker compose -f docker-compose.prod.yml ps api
+            docker image ls -a --format '{{.ID}} {{.CreatedAt}} {{.Repository}}:{{.Tag}}' | head -20
             docker compose -f docker-compose.prod.yml logs --no-color --tail=100 api
 
   deploy:
