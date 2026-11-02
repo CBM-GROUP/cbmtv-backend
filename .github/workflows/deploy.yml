@@ -6,6 +6,12 @@ on:
     types: [completed]
     branches: [master]
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Search index maintenance on the audit branch
+        type: choice
+        options: [audit, reindex]
+        default: audit
 
 permissions:
   contents: read
@@ -18,7 +24,7 @@ concurrency:
 jobs:
   audit-search-index:
     name: Audit production search index without changes
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/ops/search-index-audit'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/ops/search-index-audit' && inputs.operation != 'reindex'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -128,6 +134,127 @@ jobs:
                 'local_meilisearch_running': engine_key is not None,
                 'api_and_local_meilisearch_keys_match': bool(api_key) and api_key == engine_key,
             }, sort_keys=True))
+            PY
+
+  reindex-search-index:
+    name: Safely rebuild production search index
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/ops/search-index-audit' && inputs.operation == 'reindex'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Build, verify and atomically swap a shadow index
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          EC2_APP_DIR: ${{ vars.EC2_APP_DIR }}
+          AUDIT_RUN_ID: ${{ github.run_id }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          passphrase: ${{ secrets.EC2_PASSPHRASE }}
+          envs: EC2_APP_DIR,AUDIT_RUN_ID
+          command_timeout: 8m
+          script: |
+            set -eu
+            cd "$EC2_APP_DIR"
+            docker compose -f docker-compose.prod.yml exec -T -e AUDIT_RUN_ID="$AUDIT_RUN_ID" api python - <<'PY'
+            import json
+            import os
+            import time
+            from urllib.parse import quote
+
+            import django
+            import requests
+
+            os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cbmtv.settings')
+            django.setup()
+            from django.conf import settings
+            from content.views import build_search_documents
+
+            base = settings.MEILISEARCH_URL.rstrip('/')
+            uid = settings.MEILISEARCH_INDEX
+            if not base or not settings.MEILISEARCH_MASTER_KEY or not uid:
+                raise SystemExit('Search connection is not fully configured.')
+            shadow = f'{uid}_backup_{os.environ["AUDIT_RUN_ID"]}'
+            headers = {'Authorization': f'Bearer {settings.MEILISEARCH_MASTER_KEY}'}
+
+            def call(method, path, payload=None):
+                response = requests.request(method, base + path, headers=headers,
+                                            json=payload, timeout=30)
+                response.raise_for_status()
+                return response.json()
+
+            def wait(task):
+                task_id = task.get('taskUid') or task.get('uid')
+                if task_id is None:
+                    raise RuntimeError('Meilisearch did not return a task ID.')
+                for _ in range(120):
+                    state = call('GET', f'/tasks/{task_id}')
+                    if state['status'] == 'succeeded':
+                        return
+                    if state['status'] == 'failed':
+                        raise RuntimeError(f'Meilisearch task {task_id} failed: {state.get("error", {}).get("code")}')
+                    time.sleep(1)
+                raise RuntimeError(f'Meilisearch task {task_id} timed out.')
+
+            def documents(index):
+                rows = []
+                while True:
+                    page = call('GET', f'/indexes/{quote(index, safe="")}/documents?offset={len(rows)}&limit=1000')
+                    batch = page['results']
+                    rows.extend(batch)
+                    if len(batch) < 1000:
+                        return rows
+
+            expected = build_search_documents()
+            expected_ids = {row['id'] for row in expected}
+            if len(expected_ids) != len(expected):
+                raise RuntimeError('Duplicate approved content IDs.')
+            before = documents(uid)
+            print(json.dumps({'phase': 'before', 'approved': len(expected), 'indexed': len(before),
+                              'missing': len(expected_ids - {row['id'] for row in before})}, sort_keys=True))
+            wait(call('POST', '/indexes', {'uid': shadow, 'primaryKey': 'id'}))
+            print(json.dumps({'phase': 'shadow_created', 'backup_index': shadow}, sort_keys=True))
+            wait(call('PATCH', f'/indexes/{quote(shadow, safe="")}/settings', {
+                'searchableAttributes': ['title', 'director', 'cast', 'genres', 'genre',
+                                         'channel', 'description', 'writer', 'country',
+                                         'category', 'format', 'content_type'],
+                'filterableAttributes': ['category', 'format', 'channel', 'channel_id'],
+            }))
+            if expected:
+                wait(call('POST', f'/indexes/{quote(shadow, safe="")}/documents?primaryKey=id', expected))
+            staged = documents(shadow)
+            if len(staged) != len(expected) or {row['id'] for row in staged} != expected_ids:
+                raise RuntimeError('Shadow index count or IDs differ from approved database rows; live index untouched.')
+            for row in staged:
+                if any(field not in row for field in ('category', 'format', 'genres', 'channel')):
+                    raise RuntimeError('Shadow index lacks classification metadata; live index untouched.')
+            config = call('GET', f'/indexes/{quote(shadow, safe="")}/settings')
+            if not {'category', 'format', 'channel_id'}.issubset(config.get('filterableAttributes', [])):
+                raise RuntimeError('Shadow index filter settings incomplete; live index untouched.')
+            query_checks = {}
+            for field in ('category', 'format', 'genres', 'channel'):
+                sample = next((row for row in staged if row.get(field)), None)
+                if sample is None:
+                    query_checks[field] = 'no populated sample'
+                    continue
+                value = sample[field][0] if isinstance(sample[field], list) else sample[field]
+                result = call('POST', f'/indexes/{quote(shadow, safe="")}/search', {
+                    'q': str(value), 'attributesToSearchOn': [field], 'limit': len(staged),
+                })
+                if sample['id'] not in {row['id'] for row in result.get('hits', [])}:
+                    raise RuntimeError(f'Shadow index {field} query failed; live index untouched.')
+                query_checks[field] = 'passed'
+            print(json.dumps({'phase': 'shadow_verified', 'indexed': len(staged),
+                              'filterable_attributes': config['filterableAttributes'],
+                              'query_checks': query_checks}, sort_keys=True))
+            wait(call('POST', '/swap-indexes', [{'indexes': [uid, shadow]}]))
+            active = documents(uid)
+            if len(active) != len(expected) or {row['id'] for row in active} != expected_ids:
+                wait(call('POST', '/swap-indexes', [{'indexes': [uid, shadow]}]))
+                raise RuntimeError('Active index verification failed; original index restored.')
+            print(json.dumps({'phase': 'complete', 'approved': len(expected), 'indexed': len(active),
+                              'backup_index': shadow}, sort_keys=True))
             PY
 
   deploy:
