@@ -3,7 +3,7 @@ from ipaddress import ip_address
 from rest_framework.throttling import ScopedRateThrottle
 
 
-class PasswordLoginThrottle(ScopedRateThrottle):
+class TrustedProxyRateThrottle(ScopedRateThrottle):
     """Ignore client-supplied forwarding headers unless proxy hops are configured."""
 
     def get_ident(self, request):
@@ -18,3 +18,7 @@ class PasswordLoginThrottle(ScopedRateThrottle):
                 except ValueError:
                     pass
         return peer
+
+
+class PasswordLoginThrottle(TrustedProxyRateThrottle):
+    """Retain the existing login throttle import and environment contract."""

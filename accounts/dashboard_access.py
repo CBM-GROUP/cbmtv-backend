@@ -9,13 +9,14 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework import permissions, serializers, status
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
+from .throttles import TrustedProxyRateThrottle
 from rest_framework.views import APIView
 
 from .models import DashboardRole, User
 from .email_identity import email_identity_guard
 from .permissions import IsDashboardSuperuser, HasDashboardSection, dashboard_permissions
 from .serializers import DashboardInviteSerializer, DashboardRoleSerializer, UserProfileSerializer
+from .sessions import revoke_sessions
 
 
 PIN_LENGTH = 16
@@ -30,6 +31,7 @@ def generate_temporary_pin():
             return pin
 
 
+@transaction.atomic
 def set_temporary_pin(user):
     pin = generate_temporary_pin()
     user.set_password(pin)
@@ -37,6 +39,7 @@ def set_temporary_pin(user):
     user.temporary_pin_expires_at = timezone.now() + timedelta(hours=24)
     user.temporary_pin_attempts = 0
     user.save(update_fields=['password', 'must_change_password', 'temporary_pin_expires_at', 'temporary_pin_attempts'])
+    revoke_sessions(user)
     return pin
 
 
@@ -154,7 +157,7 @@ class DashboardUserDetailView(APIView):
                 Q(is_superuser=True) | Q(is_staff=True, role__in=('admin', 'internal_admin')),
                 is_active=True,
             ).order_by('pk').values_list('pk', flat=True))
-            user = User.objects.select_for_update().filter(pk=pk).select_related('dashboard_role').first()
+            user = User.objects.select_for_update(of=('self',)).filter(pk=pk).select_related('dashboard_role').first()
             if user is None or not (user.dashboard_role_id or user.is_staff):
                 return Response(status=status.HTTP_404_NOT_FOUND)
             if not may_manage_user(request.user, user):
@@ -176,6 +179,8 @@ class DashboardUserDetailView(APIView):
             detail.is_valid(raise_exception=True)
             detail.save()
             if 'is_active' in request.data:
+                if user.is_active and not request.data['is_active']:
+                    revoke_sessions(user)
                 user.is_active = request.data['is_active']
             user.save(update_fields=['dashboard_role', 'is_active'])
             return Response(UserProfileSerializer(user).data)
@@ -206,7 +211,7 @@ class DashboardActivateSerializer(serializers.Serializer):
 class DashboardActivateView(APIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [TrustedProxyRateThrottle]
     throttle_scope = 'dashboard_activate'
 
     def post(self, request):
@@ -237,5 +242,6 @@ class DashboardActivateView(APIView):
             user.temporary_pin_expires_at = None
             user.temporary_pin_attempts = 0
             user.save(update_fields=['password', 'must_change_password', 'temporary_pin_expires_at', 'temporary_pin_attempts'])
+            revoke_sessions(user)
 
         return Response({'detail': 'Password created. You can now sign in.'})

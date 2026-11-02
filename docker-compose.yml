@@ -19,7 +19,7 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD:-cbmtv_local_password}
       DB_HOST: postgres
       DB_PORT: 5432
-      SECRET_KEY: ${SECRET_KEY:-local-only-change-before-production}
+      SECRET_KEY: ${SECRET_KEY:?Set a strong SECRET_KEY before starting the API}
       DEBUG: ${DEBUG:-false}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
       CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-http://localhost:8001}

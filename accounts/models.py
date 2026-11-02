@@ -79,6 +79,7 @@ class User (AbstractBaseUser, PermissionsMixin):
     temporary_pin_attempts = models.PositiveSmallIntegerField(default=0)
     auth_provider = models.CharField(max_length=20, choices=AUTH_PROVIDER_CHOICES, default='local')
     google_subject = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    session_version = models.PositiveIntegerField(default=0, editable=False)
 
 
     is_active = models.BooleanField(default=True)
@@ -91,6 +92,18 @@ class User (AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding and kwargs.get('update_fields') is None:
+            # Profile/admin saves can hold a stale User instance across logout.
+            # Ordinary saves must never restore a revoked session version.
+            deferred = self.get_deferred_fields()
+            kwargs['update_fields'] = [
+                field.attname for field in self._meta.concrete_fields
+                if not field.primary_key and field.name != 'session_version'
+                and field.attname not in deferred
+            ]
+        return super().save(*args, **kwargs)
 
 class RoleChangeLog(models.Model):
     changed_by = models.ForeignKey(User, on_delete=models.CASCADE,related_name="role_changes_made")

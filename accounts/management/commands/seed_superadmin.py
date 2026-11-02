@@ -16,6 +16,10 @@ Supports environment variables:
 import os
 from django.core.management.base import BaseCommand, CommandError
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from accounts.sessions import revoke_sessions
 
 
 DEFAULT_SUPERADMIN_EMAIL = "admin@cbmtv.online"
@@ -67,6 +71,7 @@ class Command(BaseCommand):
             help="Update the password if the user already exists",
         )
 
+    @transaction.atomic
     def handle(self, *args, **options):
         email = (options.get("email") or os.environ.get("DJANGO_SUPERUSER_EMAIL") or DEFAULT_SUPERADMIN_EMAIL).strip()
         password = options.get("password") or os.environ.get("DJANGO_SUPERUSER_PASSWORD")
@@ -81,6 +86,12 @@ class Command(BaseCommand):
 
         User = get_user_model()
         user = User.objects.filter(email=email).first()
+
+        if user is None or reset_password:
+            try:
+                validate_password(password, user=user or User(email=email, name=name))
+            except ValidationError as exc:
+                raise CommandError('Invalid superadmin password: ' + ' '.join(exc.messages)) from exc
 
         if user:
             # User already exists
@@ -104,6 +115,8 @@ class Command(BaseCommand):
 
             if updated_fields:
                 user.save()
+                if reset_password:
+                    revoke_sessions(user)
                 self.stdout.write(
                     self.style.SUCCESS(
                         f"Superadmin user '{email}' already exists. Updated attributes: {', '.join(updated_fields)}."

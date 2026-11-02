@@ -47,11 +47,11 @@ services:
     image: getmeili/meilisearch:v1.9
     restart: always
     environment:
-      - MEILI_MASTER_KEY=${MASTER_KEY:-default_master_key_change_me}
+      - MEILI_MASTER_KEY=${MASTER_KEY:?Set MASTER_KEY before starting production Meilisearch}
       - MEILI_NO_ANALYTICS=true
       - MEILI_ENV=production
     ports:
-      - "7700:7700"
+      - "127.0.0.1:7700:7700"
     volumes:
       - meilisearch_data_prod:/meili_data
 

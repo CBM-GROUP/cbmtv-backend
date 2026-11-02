@@ -14,6 +14,8 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
+from django.core.management.utils import get_random_secret_key
 
 load_dotenv()
 
@@ -45,13 +47,13 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get(
-    "SECRET_KEY",
-    "django-insecure-l-lxx-*u2my&r*8p66%m*ppf+shl8s_@cz3(njf7xabcj2dg)(",
-)
-
-# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_bool("DEBUG", False)
+SECRET_KEY = os.environ.get('SECRET_KEY', '')
+if DEBUG and not SECRET_KEY:
+    # Development only; production must keep a stable secret in its secret store.
+    SECRET_KEY = get_random_secret_key()
+if not DEBUG and (len(SECRET_KEY) < 50 or len(set(SECRET_KEY)) < 5 or SECRET_KEY.startswith('django-insecure-')):
+    raise ImproperlyConfigured('Configure a strong SECRET_KEY (at least 50 characters) before starting with DEBUG=false.')
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
@@ -218,8 +220,7 @@ AUTH_USER_MODEL = 'accounts.User'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES':(
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-        'rest_framework.authentication.BasicAuthentication',
+        'accounts.sessions.SessionJWTAuthentication',
     ),
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     # Only views that opt in via `throttle_scope` are throttled. The password

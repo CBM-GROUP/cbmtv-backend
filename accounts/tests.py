@@ -30,7 +30,7 @@ class RegistrationTests(APITestCase):
             {
                 'email': 'minimal@example.com',
                 'name': 'Minimal User',
-                'password': 'pass1234',
+                'password': 'Registration-Secure-Password-42!',
             },
             format='json',
         )
@@ -50,7 +50,7 @@ class RegistrationTests(APITestCase):
             {
                 'email': 'full@example.com',
                 'name': 'Full User',
-                'password': 'pass1234',
+                'password': 'Registration-Secure-Password-42!',
                 'phone': '+256700000000',
                 'location': 'Kampala',
                 'country': 'UG',
@@ -70,18 +70,18 @@ class RegistrationTests(APITestCase):
         """The submitted password must authenticate, i.e. it was hashed once."""
         self.client.post(
             self.register_url,
-            {'email': 'hash@example.com', 'name': 'Hash', 'password': 'pass1234'},
+            {'email': 'hash@example.com', 'name': 'Hash', 'password': 'Registration-Secure-Password-42!'},
             format='json',
         )
         user = User.objects.get(email='hash@example.com')
-        self.assertNotEqual(user.password, 'pass1234')
-        self.assertTrue(user.check_password('pass1234'))
+        self.assertNotEqual(user.password, 'Registration-Secure-Password-42!')
+        self.assertTrue(user.check_password('Registration-Secure-Password-42!'))
 
     def test_duplicate_registration_is_rejected(self):
         payload = {
             'email': 'dupe@example.com',
             'name': 'First',
-            'password': 'pass1234',
+            'password': 'Registration-Secure-Password-42!',
         }
         first = self.client.post(self.register_url, payload, format='json')
         self.assertEqual(first.status_code, status.HTTP_201_CREATED)
@@ -98,7 +98,7 @@ class RegistrationTests(APITestCase):
     def test_register_without_email_is_rejected(self):
         response = self.client.post(
             self.register_url,
-            {'name': 'No Email', 'password': 'pass1234'},
+            {'name': 'No Email', 'password': 'Registration-Secure-Password-42!'},
             format='json',
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -107,13 +107,13 @@ class RegistrationTests(APITestCase):
         """End to end: the account created above can obtain a token pair."""
         self.client.post(
             self.register_url,
-            {'email': 'login@example.com', 'name': 'Login User', 'password': 'pass1234'},
+            {'email': 'login@example.com', 'name': 'Login User', 'password': 'Registration-Secure-Password-42!'},
             format='json',
         )
 
         response = self.client.post(
             self.login_url,
-            {'email': 'login@example.com', 'password': 'pass1234'},
+            {'email': 'login@example.com', 'password': 'Registration-Secure-Password-42!'},
             format='json',
         )
 
@@ -127,7 +127,7 @@ class RegistrationTests(APITestCase):
     def test_login_with_wrong_password_is_rejected(self):
         self.client.post(
             self.register_url,
-            {'email': 'wrong@example.com', 'name': 'Wrong', 'password': 'pass1234'},
+            {'email': 'wrong@example.com', 'name': 'Wrong', 'password': 'Registration-Secure-Password-42!'},
             format='json',
         )
         response = self.client.post(

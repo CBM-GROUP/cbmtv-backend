@@ -21,11 +21,12 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework import permissions, serializers, status
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
+from .throttles import TrustedProxyRateThrottle
 from rest_framework.views import APIView
 
 from .models import PasswordResetCode, User
 from .email_identity import unique_email_user
+from .sessions import revoke_sessions
 
 REQUEST_ACCEPTED = "If an account exists for that email, a reset code has been sent."
 INVALID_CODE = "Invalid or expired code."
@@ -86,7 +87,7 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 class PasswordResetRequestView(APIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [TrustedProxyRateThrottle]
     throttle_scope = 'password_reset'
 
     def post(self, request):
@@ -103,7 +104,7 @@ class PasswordResetRequestView(APIView):
 class PasswordResetConfirmView(APIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [TrustedProxyRateThrottle]
     throttle_scope = 'password_reset_confirm'
 
     def post(self, request):
@@ -153,6 +154,7 @@ class PasswordResetConfirmView(APIView):
             user.temporary_pin_expires_at = None
             user.temporary_pin_attempts = 0
             user.save(update_fields=['password', 'must_change_password', 'temporary_pin_expires_at', 'temporary_pin_attempts'])
+            revoke_sessions(user)
             reset.used = True
             reset.save(update_fields=['used'])
 

@@ -7,9 +7,12 @@ from .models import DashboardRole
 from .permissions import DASHBOARD_SECTIONS, dashboard_permissions
 from .email_identity import email_identity_guard, unique_email_user
 from rest_framework.exceptions import AuthenticationFailed
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from .sessions import SessionRefreshToken, validate_session
 
 class RegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True)
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
     image = serializers.URLField(required=False, allow_null=True, allow_blank=True)
 
     class Meta:
@@ -21,6 +24,14 @@ class RegisterSerializer(serializers.ModelSerializer):
         if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError('Unable to register with this email.')
         return value
+
+    def validate(self, attrs):
+        candidate = User(**{key: value for key, value in attrs.items() if key != 'password'})
+        try:
+            validate_password(attrs['password'], user=candidate)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'password': list(exc.messages)}) from exc
+        return attrs
 
     def create(self, validated_data):
         image = validated_data.pop('image', None)
@@ -116,6 +127,8 @@ class DashboardInviteSerializer(serializers.Serializer):
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    token_class = SessionRefreshToken
+
     def validate(self, attrs):
         user = unique_email_user(attrs.get('email', ''))
         if user is None:
@@ -149,9 +162,12 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 
 class ActiveTokenRefreshSerializer(TokenRefreshSerializer):
+    token_class = SessionRefreshToken
+
     def validate(self, attrs):
-        token = RefreshToken(attrs['refresh'])
+        token = self.token_class(attrs['refresh'])
         user = User.objects.filter(pk=token.get('user_id'), is_active=True, must_change_password=False).first()
         if user is None:
             raise serializers.ValidationError({'detail': 'Account is inactive or requires activation.'})
+        validate_session(token, user)
         return super().validate(attrs)
