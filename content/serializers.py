@@ -85,6 +85,11 @@ class GenreSerializer(serializers.ModelSerializer):
 
 class ContentSerializer(serializers.ModelSerializer):
     genres = serializers.PrimaryKeyRelatedField(many=True, queryset=Genre.objects.all(), required=False)
+    cast = serializers.ListField(
+        child=serializers.CharField(max_length=200, allow_blank=False, trim_whitespace=True),
+        required=False,
+        max_length=100,
+    )
 
     def validate(self, attrs):
         legacy_type = attrs.get('content_type', self.instance.content_type if self.instance else None)

@@ -186,7 +186,7 @@ class SearchHydrationTests(SearchReindexTestBase):
         ])
 
         with patch('content.views.get_search_index', return_value=index):
-            response = self.client.get(self.search_url, {'q': 'indexonlytoken'})
+            response = self.client.get(self.search_url, {'q': 'dija'})
 
         self.assertEqual(response.data['count'], 1)
         self.assertEqual([h['id'] for h in response.data['hits']], [self.dija.id])
@@ -198,7 +198,7 @@ class SearchHydrationTests(SearchReindexTestBase):
         """
         index = self.make_index(hits=[{'id': self.series.id}, {'id': self.dija.id}])
         with patch('content.views.get_search_index', return_value=index):
-            forward = self.client.get(self.search_url, {'q': 'indexonlytoken'})
+            forward = self.client.get(self.search_url, {'q': 'a'})
         self.assertEqual(
             [h['id'] for h in forward.data['hits']],
             [self.series.id, self.dija.id],
@@ -206,7 +206,7 @@ class SearchHydrationTests(SearchReindexTestBase):
 
         index = self.make_index(hits=[{'id': self.dija.id}, {'id': self.series.id}])
         with patch('content.views.get_search_index', return_value=index):
-            reverse = self.client.get(self.search_url, {'q': 'indexonlytoken'})
+            reverse = self.client.get(self.search_url, {'q': 'a'})
         self.assertEqual(
             [h['id'] for h in reverse.data['hits']],
             [self.dija.id, self.series.id],
@@ -248,7 +248,7 @@ class SearchHydrationTests(SearchReindexTestBase):
         ])
 
         with patch('content.views.get_search_index', return_value=index):
-            response = self.client.get(self.search_url, {'q': 'indexonlytoken'})
+            response = self.client.get(self.search_url, {'q': 'dija'})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual([h['id'] for h in response.data['hits']], [self.dija.id])
@@ -286,11 +286,11 @@ class DatabaseFallbackMatchingTests(SearchReindexTestBase):
                 self.assertEqual(self.search(term).data['count'], 1)
 
     def test_genre_is_searchable(self):
-        titles = [h['title'] for h in self.search('drama').data['hits']]
+        titles = [h['title'] for h in self.search('drama', search_by='genre').data['hits']]
         self.assertEqual(titles, ['A Series'])
 
     def test_description_is_searchable(self):
-        titles = [h['title'] for h in self.search('romance films').data['hits']]
+        titles = [h['title'] for h in self.search('romance films', search_by='everything').data['hits']]
         self.assertEqual(titles, ['Dear Dija'])
 
     def test_fallback_respects_the_limit(self):
@@ -337,7 +337,7 @@ class ReindexViewTests(SearchReindexTestBase):
         index = self.make_index()
         self.client.force_authenticate(user=self.admin)
 
-        with patch('content.views.get_search_index', return_value=index):
+        with patch('content.views.swap_search_index', return_value={'indexed': 2, 'backup_index': 'content_backup_test'}) as swap:
             response = self.client.post(self.reindex_url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -347,8 +347,8 @@ class ReindexViewTests(SearchReindexTestBase):
         self.assertIn('message', response.data)
         self.assertIn('2', response.data['message'])
 
-        index.delete.assert_called_once()
-        index.add_documents.assert_called_once()
+        swap.assert_called_once()
+        index.delete.assert_not_called()
 
     def test_reindex_documents_carry_the_real_genre_field(self):
         """
@@ -359,32 +359,32 @@ class ReindexViewTests(SearchReindexTestBase):
         index = self.make_index()
         self.client.force_authenticate(user=self.admin)
 
-        with patch('content.views.get_search_index', return_value=index):
+        with patch('content.views.swap_search_index', return_value={'indexed': 2, 'backup_index': 'content_backup_test'}) as swap:
             self.client.post(self.reindex_url)
 
-        documents = index.add_documents.call_args[0][0]
+        documents = swap.call_args[0][0]
         by_title = {doc['title']: doc for doc in documents}
         self.assertEqual(by_title['Dear Dija']['genre'], 'Short Movie')
         self.assertEqual(by_title['A Series']['genre'], 'Drama')
         self.assertEqual(by_title['A Series']['content_type'], 'series')
 
-    def test_reindex_survives_a_missing_index_on_delete(self):
+    def test_reindex_never_deletes_the_live_index(self):
         index = self.make_index()
         index.delete.side_effect = RuntimeError("index_not_found")
         self.client.force_authenticate(user=self.admin)
 
-        with patch('content.views.get_search_index', return_value=index):
+        with patch('content.views.swap_search_index', return_value={'indexed': 2, 'backup_index': 'content_backup_test'}):
             response = self.client.post(self.reindex_url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        index.add_documents.assert_called_once()
+        index.delete.assert_not_called()
 
     def test_reindex_reports_502_when_add_documents_fails(self):
         index = self.make_index()
         index.add_documents.side_effect = RuntimeError("connection refused")
         self.client.force_authenticate(user=self.admin)
 
-        with patch('content.views.get_search_index', return_value=index):
+        with patch('content.views.swap_search_index', side_effect=RuntimeError('connection refused')):
             response = self.client.post(self.reindex_url)
 
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
@@ -394,7 +394,7 @@ class ReindexViewTests(SearchReindexTestBase):
         from content.views import SearchUnavailable
 
         self.client.force_authenticate(user=self.admin)
-        with patch('content.views.get_search_index',
+        with patch('content.views.swap_search_index',
                    side_effect=SearchUnavailable('MEILISEARCH_URL is unset.')):
             response = self.client.post(self.reindex_url)
 

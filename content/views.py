@@ -19,6 +19,7 @@ from accounts.permissions import HasDashboardSection
 from common.idempotency import IdempotentCreateMixin
 from .publication import PUBLIC_STATUS, HasDashboardMediaAccess, dashboard_scope, visible_queryset
 from .search_sync import SearchUnavailable, get_search_index, content_document, upsert_content, remove_content
+from .search_reindex import rebuild_search_index as swap_search_index
 from .taxonomy import CATEGORY_CHOICES, FORMAT_CHOICES, CATEGORY_FLAGS
 
 
@@ -54,30 +55,12 @@ def build_search_documents():
     worth *matching* on belong here: everything the client renders is read back
     from the database in `search_view`, never from the index.
     """
-    return [content_document(content) for content in Content.objects.filter(status=PUBLIC_STATUS).select_related('channel').prefetch_related('genres').order_by('id')]
+    return [content_document(content) for content in Content.objects.filter(status=PUBLIC_STATUS).select_related('channel').prefetch_related('genres__parent').order_by('id')]
 
 
 def rebuild_search_index():
-    """
-    Drop and repopulate the Meilisearch content index from the database.
-
-    Shared by `POST /api/content/reindex/` and `manage.py reindex_search`, so the
-    HTTP route and the CLI cannot drift apart. Raises SearchUnavailable when
-    Meilisearch is unconfigured; any other exception is a backend failure and is
-    left for the caller to translate.
-    """
-    index = get_search_index()
-    documents = build_search_documents()
-
-    try:
-        index.delete()
-    except Exception:
-        # A missing index is not an error: add_documents recreates it.
-        pass
-
-    # Re-resolve after the delete so the handle refers to the new index.
-    get_search_index().add_documents(documents)
-    return len(documents)
+    """Rebuild with a verified shadow index; retain the old index for rollback."""
+    return swap_search_index(build_search_documents())
 
 
 def _hit_ids(raw_hits):
@@ -114,15 +97,33 @@ def _rank_ordered(ids):
     return [rows[i] for i in ids if i in rows]
 
 
-def _database_matches(query):
+SEARCH_FIELDS = {
+    'title': ('title',),
+    'director': ('director',),
+    'genre': ('genre', 'genres__name', 'genres__parent__name'),
+    'cast': ('cast',),
+    'channel': ('channel__name',),
+    'everything': ('title', 'director', 'cast', 'genre', 'genres__name',
+                   'genres__parent__name', 'channel__name', 'description',
+                   'writer', 'country', 'content_type', 'category', 'format'),
+}
+
+INDEX_FIELDS = {
+    'title': ['title'], 'director': ['director'], 'genre': ['genre', 'genres'],
+    'cast': ['cast'], 'channel': ['channel'],
+    'everything': ['title', 'director', 'cast', 'genres', 'genre', 'channel',
+                   'description', 'writer', 'country', 'content_type',
+                   'category', 'format'],
+}
+
+
+def _database_matches(query, search_by='title'):
     """Authoritative public matches, including records absent from the index.
 
-    Each query word may match a different public metadata field. This supplements
-    Meilisearch rather than replacing its relevance and typo matching. Keep this
-    as a queryset so continuation pages never serialize the entire catalogue.
+    Each query word may match a different field within the selected search mode.
+    Keep this as a queryset so continuation pages do not materialize the catalogue.
     """
-    fields = ('title', 'genre', 'genres__name', 'description', 'channel__name',
-              'director', 'writer', 'country', 'content_type', 'category')
+    fields = SEARCH_FIELDS[search_by]
     aliases = {
         'movies': 'movies', 'movie': 'movies',
         'tv shows': 'tv_shows', 'tv show': 'tv_shows',
@@ -139,14 +140,19 @@ def _database_matches(query):
     for term in query.split():
         term_match = Q()
         for field in fields:
-            term_match |= Q(**{f'{field}__icontains': term})
-        if term.lower() in aliases:
+            match = Q(**{f'{field}__icontains': term})
+            if field.startswith('genres__'):
+                match &= Q(genres__is_active=True)
+                if field.startswith('genres__parent__'):
+                    match &= Q(genres__parent__is_active=True)
+            term_match |= match
+        if search_by == 'everything' and term.lower() in aliases:
             term_match |= category_match(aliases[term.lower()])
         predicate &= term_match
     category = aliases.get(query.lower())
-    if category:
+    if search_by == 'everything' and category:
         predicate |= category_match(category)
-    elif query.lower() == 'series':
+    elif search_by == 'everything' and query.lower() == 'series':
         predicate |= Q(format='series') | Q(content_type__in=('series', 'miniseries'))
     return Content.objects.filter(status=PUBLIC_STATUS).filter(predicate).distinct().order_by('-created_at', '-id')
 
@@ -189,7 +195,7 @@ class GenreDetailView(generics.RetrieveUpdateAPIView):
 
     def perform_update(self, serializer):
         genre = serializer.save()
-        ids = list(genre.titles.values_list('pk', flat=True))
+        ids = list(Content.objects.filter(Q(genres=genre) | Q(genres__parent=genre)).distinct().values_list('pk', flat=True))
         transaction.on_commit(lambda: [upsert_content(pk) for pk in ids])
 
     def get_permissions(self):
@@ -225,9 +231,14 @@ def search_view(request):
     does what its name says and never writes.
     """
     query = (request.query_params.get('q') or '').strip()
+    search_by = (request.query_params.get('search_by') or 'title').strip().lower()
+    if search_by not in SEARCH_FIELDS:
+        return Response({'search_by': f'Choose one of: {", ".join(SEARCH_FIELDS)}.'}, status=400)
+    if len(query) > 200:
+        return Response({'q': 'Use at most 200 characters.'}, status=400)
     if not query:
         return Response({'query': '', 'count': 0, 'hits': [], 'source': 'none',
-                         'total': 0, 'offset': 0, 'next_offset': None})
+                         'total': 0, 'offset': 0, 'next_offset': None, 'search_by': search_by})
 
     try:
         limit = int(request.query_params.get('limit') or 20)
@@ -242,6 +253,16 @@ def search_view(request):
         return Response({'offset': 'Use a non-negative integer.'}, status=400)
 
     published = Content.objects.filter(status=PUBLIC_STATUS)
+    category = request.query_params.get('category')
+    if category:
+        if category not in dict(CATEGORY_CHOICES):
+            return Response({'category': 'Choose one of the four primary categories.'}, status=400)
+        published = published.filter(category=category)
+    channel = request.query_params.get('channel')
+    if channel:
+        if not channel.isdigit() or int(channel) < 1:
+            return Response({'channel': 'Use a positive channel ID.'}, status=400)
+        published = published.filter(channel_id=int(channel))
     ranked_ids = []
 
     try:
@@ -249,12 +270,21 @@ def search_view(request):
         # Request ranked IDs across this catalogue, not just the visible page.
         # Missing/stale index records cannot cap the database match set below.
         result = index.search(query, {
-            'limit': max(limit, published.count()),
+            'limit': max(limit, min(offset + limit, 1000)),
             'attributesToRetrieve': ['id'],
+            'attributesToSearchOn': INDEX_FIELDS[search_by],
         })
         raw_hits = result.get('hits', []) if isinstance(result, dict) else []
         ids = _hit_ids(raw_hits)
-        eligible = set(published.filter(pk__in=ids).values_list('pk', flat=True))
+        if search_by == 'everything':
+            # Keep Meilisearch typo tolerance for broad discovery. Publication
+            # still comes from the current database, never the index document.
+            eligible = set(published.filter(pk__in=ids).values_list('pk', flat=True))
+        else:
+            # A stale index must not turn a director/cast/genre/channel match
+            # into a hit whose current metadata only mentions the query elsewhere.
+            matching = _database_matches(query, search_by).filter(pk__in=ids)
+            eligible = set(published.filter(pk__in=matching.values('pk')).values_list('pk', flat=True))
         ranked_ids = [content_id for content_id in ids if content_id in eligible]
     except SearchUnavailable:
         pass
@@ -264,9 +294,9 @@ def search_view(request):
 
     # An exact title must remain findable even when the index returns weaker
     # matches. Supplement partial index responses, not only completely empty ones.
-    exact_ids = list(published.filter(title__iexact=query).order_by('-created_at', '-id').values_list('pk', flat=True))
+    exact_ids = list(published.filter(title__iexact=query).order_by('-created_at', '-id').values_list('pk', flat=True)) if search_by in ('title', 'everything') else []
     head_ids = list(dict.fromkeys(exact_ids + ranked_ids))
-    remaining = _database_matches(query).exclude(pk__in=head_ids)
+    remaining = _database_matches(query, search_by).filter(pk__in=published.values('pk')).exclude(pk__in=head_ids)
     total = len(head_ids) + remaining.count()
     rows = []
     if offset < total:
@@ -278,6 +308,7 @@ def search_view(request):
     hits = ContentSerializer(rows, many=True).data
     return Response({
         'query': query,
+        'search_by': search_by,
         'count': len(hits),
         'hits': hits,
         'source': 'meilisearch' if ranked_ids else 'database',
@@ -299,7 +330,7 @@ class ReindexView(APIView):
 
     def post(self, request):
         try:
-            indexed = rebuild_search_index()
+            result = rebuild_search_index()
         except SearchUnavailable as exc:
             return Response({'status': 'error', 'message': str(exc)}, status=503)
         except Exception:
@@ -310,9 +341,10 @@ class ReindexView(APIView):
 
         return Response({
             'status': 'success',
-            'indexed': indexed,
+            'indexed': result['indexed'],
+            'backup_index': result['backup_index'],
             # The dashboard's "Sync Search Data" button alerts response.data.message.
-            'message': f'Indexed {indexed} documents to Meilisearch',
+            'message': f'Indexed {result["indexed"]} documents to Meilisearch',
         })
 
 @api_view(['GET'])

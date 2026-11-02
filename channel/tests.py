@@ -1,7 +1,9 @@
 from rest_framework import status
 from rest_framework.test import APITestCase, APIClient
+from unittest.mock import patch
 
 from accounts.models import User
+from content.models import Content
 from .models import Channel
 
 
@@ -75,3 +77,15 @@ class ChannelApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("name", response.data)
+
+    def test_channel_rename_schedules_search_document_refresh(self):
+        channel = Channel.objects.get(name='CBM Movies')
+        content = Content.objects.create(title='A title', content_type='movie',
+                                         status='approved', channel=channel)
+        self.client.force_authenticate(user=self.admin_user)
+        with patch('channel.views.upsert_content') as upsert:
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self.client.patch(f'/api/channels/{channel.pk}/',
+                                             {'name': 'CBM Films'}, format='json')
+        self.assertEqual(response.status_code, 200)
+        upsert.assert_called_once_with(content.pk)

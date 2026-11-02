@@ -7,6 +7,8 @@ from .serializers import ChannelSerializer
 from content.models import Content
 from content.serializers import ContentSerializer
 from content.publication import visible_queryset
+from content.search_sync import upsert_content
+from django.db import transaction
 from accounts.permissions import HasDashboardSection
 from common.idempotency import IdempotentCreateMixin
 
@@ -27,6 +29,11 @@ class ChannelViewSet(IdempotentCreateMixin, viewsets.ModelViewSet):
     serializer_class = ChannelSerializer
     permission_classes = [HasDashboardSection]  # Default permissions
     pagination_class = StandardPagination
+
+    def perform_update(self, serializer):
+        channel = serializer.save()
+        ids = list(channel.content.values_list('pk', flat=True))
+        transaction.on_commit(lambda: [upsert_content(pk) for pk in ids])
 
     def get_permissions(self):
         """
