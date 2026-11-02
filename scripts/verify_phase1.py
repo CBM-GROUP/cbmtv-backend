@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ['PYTHON_DOTENV_DISABLED'] = '1'
 os.environ['DJANGO_SETTINGS_MODULE'] = 'cbmtv.settings'
+os.environ['SECRET_KEY'] = 'phase1-disposable-verification-only-secret-0123456789abcdef'
 from django.conf import settings
 
 settings.DATABASES = {'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}}

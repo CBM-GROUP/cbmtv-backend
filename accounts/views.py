@@ -9,7 +9,7 @@ from .serializers import (
 from .models import User, RoleChangeLog
 from .google_auth import verified_google_identity
 from .email_identity import email_identity_guard, unique_email_user
-from .throttles import PasswordLoginThrottle
+from .throttles import PasswordLoginThrottle, TrustedProxyRateThrottle
 from django.db import IntegrityError, transaction
 from rest_framework import generics, permissions 
 from rest_framework .views import APIView
@@ -17,10 +17,11 @@ from rest_framework .response import Response
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAdminUser
-from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework import parsers
-from rest_framework.throttling import ScopedRateThrottle
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from .sessions import SessionRefreshToken, revoke_sessions
 
 # Create your views here.
 class RegisterView(generics.CreateAPIView):
@@ -87,7 +88,7 @@ class ChangePasswordView(APIView):
         new_password = request.data.get('new_password', '')
         confirm_password = request.data.get('confirm_password', '')
 
-        if not current_password or not new_password or not confirm_password:
+        if not all(isinstance(value, str) and value for value in (current_password, new_password, confirm_password)):
             return Response({"detail": "current_password, new_password and confirm_password are required"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not target_user.check_password(current_password):
@@ -99,10 +100,26 @@ class ChangePasswordView(APIView):
         if current_password == new_password:
             return Response({"detail": "New password must be different from current password"}, status=status.HTTP_400_BAD_REQUEST)
 
-        target_user.set_password(new_password)
-        target_user.save(update_fields=['password'])
+        try:
+            validate_password(new_password, user=target_user)
+        except DjangoValidationError as exc:
+            return Response({'new_password': list(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            target_user.set_password(new_password)
+            target_user.save(update_fields=['password'])
+            revoke_sessions(target_user)
 
         return Response({"detail": "Password updated successfully"}, status=status.HTTP_200_OK)
+
+
+class LogoutView(APIView):
+    """Revoke this account's access and refresh tokens on every device."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        revoke_sessions(request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class AssignAdminRoleView(APIView):
@@ -176,7 +193,7 @@ def google_sign_in_disallowed(user):
 
 class GoogleDirectLoginView(APIView):
     permission_classes = [permissions.AllowAny]
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [TrustedProxyRateThrottle]
     throttle_scope = 'google_login'
 
     def post(self, request):
@@ -209,7 +226,7 @@ class GoogleDirectLoginView(APIView):
             return Response({'detail': 'This account cannot use Google sign-in.'}, status=status.HTTP_403_FORBIDDEN)
 
         # Issue JWT tokens using SimpleJWT
-        refresh = RefreshToken.for_user(user)
+        refresh = SessionRefreshToken.for_user(user)
         
         # Image is stored as a plain link. Return it as-is.
         
@@ -233,7 +250,7 @@ class GoogleLinkView(APIView):
     """Explicitly link an existing viewer account after password confirmation."""
 
     permission_classes = [permissions.IsAuthenticated]
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [TrustedProxyRateThrottle]
     throttle_scope = 'google_link'
 
     def post(self, request):

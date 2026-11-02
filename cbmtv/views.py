@@ -1,5 +1,15 @@
 from django.db import connection
 from django.http import JsonResponse, HttpResponse
+import logging
+
+
+logger = logging.getLogger(__name__)
+
+
+def liveness(request):
+    response = JsonResponse({'status': 'ok'})
+    response['Cache-Control'] = 'no-store'
+    return response
 
 
 HTML_LANDING = """<!DOCTYPE html>
@@ -159,8 +169,14 @@ def root_view(request):
 def health(request):
     """Report whether the API process and its database are ready."""
     try:
-        connection.ensure_connection()
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT 1')
+            cursor.fetchone()
     except Exception:
-        return JsonResponse({"status": "unhealthy"}, status=503)
-    return JsonResponse({"status": "ok"})
+        logger.warning('Database readiness probe failed')
+        response = JsonResponse({'status': 'unhealthy'}, status=503)
+    else:
+        response = JsonResponse({'status': 'ok'})
+    response['Cache-Control'] = 'no-store'
+    return response
 

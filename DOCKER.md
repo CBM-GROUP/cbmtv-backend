@@ -2,7 +2,8 @@
 
 ## Run locally
 
-Docker Compose starts the Django API and PostgreSQL:
+Copy `.env.example` to `.env` and set a generated `SECRET_KEY` of at least 50
+characters before starting. Docker Compose starts the API, PostgreSQL and Meilisearch:
 
 ```sh
 docker compose up --build
@@ -11,8 +12,8 @@ docker compose up --build
 The API is available at `http://localhost:8001` and its readiness endpoint is
 `http://localhost:8001/health/`. PostgreSQL is exposed on local port `5433`.
 
-Copy `.env.example` to `.env` to override the safe local defaults. Do not use
-those defaults in production.
+Local database/search defaults are development values. Do not use them in production.
+See [the operations runbook](docs/operations.md) for configuration and release checks.
 
 Useful commands:
 
@@ -62,13 +63,12 @@ a local install):
 DB_NAME=cbmtv DB_USER=cbmtv DB_PASSWORD=cbmtv_local_password DB_HOST=127.0.0.1 DB_PORT=5433 python manage.py runserver 8001
 ```
 
-**This stack is not production.** Production is Railway, with its own managed
-Postgres reached via `DATABASE_URL`. Migrating locally proves the migrations
-apply cleanly; it does not change production. Production is migrated by the
-`preDeployCommand` in `railway.json` on each deploy, or manually with
-`railway run python manage.py migrate --noinput`.
+The repository contains Railway, Render and EC2 deployment configuration; the
+actual production target must be verified by its operator. Local migration
+success does not establish production migration state. The Railway-specific
+`preDeployCommand` in `railway.json` applies only if Railway is the confirmed target.
 
-## AWS deployment baseline
+## Optional AWS deployment example (requires DevOps approval)
 
 The image is suitable for Amazon ECR and an ECS/Fargate service. Build it with
 `docker build -t cbmtv-api .`, then:
@@ -86,5 +86,6 @@ The image is suitable for Amazon ECR and an ECS/Fargate service. Build it with
    service, set `RUN_MIGRATIONS=false` on the long-running web tasks to prevent
    concurrent migration attempts.
 
-Static files are served by WhiteNoise. If file uploads are added later, use
-S3-backed Django storage because Fargate task filesystems are ephemeral.
+Static files are served by WhiteNoise. Existing media uploads go directly to S3
+through Django-authorized upload targets; database records store delivery URLs.
+No worker, ECR, ECS or RDS resources are provisioned by these instructions.

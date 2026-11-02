@@ -250,9 +250,10 @@ class ReindexView(APIView):
             indexed = rebuild_search_index()
         except SearchUnavailable as exc:
             return Response({'status': 'error', 'message': str(exc)}, status=503)
-        except Exception as exc:
+        except Exception:
+            logging.getLogger(__name__).exception('Search reindex failed')
             return Response(
-                {'status': 'error', 'message': f'Reindex failed: {exc}'}, status=502
+                {'status': 'error', 'message': 'Reindex failed. Check the server logs.'}, status=502
             )
 
         return Response({

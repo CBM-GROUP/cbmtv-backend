@@ -3,6 +3,7 @@ from .views import RegisterView, profile, AssignAdminRoleView, ListUsersView, Go
 from rest_framework_simplejwt.views import TokenRefreshView
 from .serializers import ActiveTokenRefreshSerializer
 from .password_reset import PasswordResetRequestView, PasswordResetConfirmView
+from .views import LogoutView
 from .dashboard_access import (
     DashboardActivateView, DashboardRolesView, DashboardRoleDetailView,
     DashboardUsersView, DashboardUserDetailView, ResendDashboardInviteView,
@@ -13,6 +14,7 @@ class ActiveTokenRefreshView(TokenRefreshView):
     serializer_class = ActiveTokenRefreshSerializer
 
 urlpatterns = [
+    path('logout/', LogoutView.as_view(), name='logout'),
     path ('register/', RegisterView.as_view(), name='register'),
     path ('login/', CustomTokenObtainPairView.as_view(), name = 'login'),
     path('token/refresh/', ActiveTokenRefreshView.as_view(), name='token_refresh'),
