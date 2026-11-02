@@ -53,7 +53,7 @@ jobs:
             base = settings.MEILISEARCH_URL.rstrip('/')
             if not base:
                 raise SystemExit('Meilisearch URL is not configured.')
-            headers = {'X-Meili-API-Key': settings.MEILISEARCH_MASTER_KEY}
+            headers = {'Authorization': f'Bearer {settings.MEILISEARCH_MASTER_KEY}'}
             index_url = f'{base}/indexes/{quote(uid, safe="")}'
             def get(path, **params):
                 response = requests.get(index_url + path, headers=headers, params=params, timeout=10)
