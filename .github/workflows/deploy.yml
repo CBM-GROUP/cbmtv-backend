@@ -16,6 +16,70 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  rotate-production-key:
+    name: Rotate weak production Django key
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/taxonomy-prod-key'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Generate key on EC2 and retain a restricted rollback copy
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          EC2_APP_DIR: ${{ vars.EC2_APP_DIR }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          passphrase: ${{ secrets.EC2_PASSPHRASE }}
+          envs: EC2_APP_DIR
+          command_timeout: 3m
+          script: |
+            set -eu
+            cd "$EC2_APP_DIR"
+            [ "$(git rev-parse HEAD)" = 5fe62d55e300c8e826c42839b073e94d29c6dbdd ]
+            curl --fail --silent --show-error http://127.0.0.1:8000/health/ >/dev/null
+            command -v python3 >/dev/null
+            python3 - <<'PY'
+            import os
+            from pathlib import Path
+            import re
+            import secrets
+            import shutil
+            import stat
+            import tempfile
+
+            path = Path('.env')
+            backup = Path('.env.branch2-backup')
+            if not path.is_file() or backup.exists():
+                raise SystemExit('Environment missing or rollback backup already exists; no change made.')
+            if not os.access(path, os.W_OK) or not os.access(path.parent, os.W_OK):
+                raise SystemExit('Environment is not writable by the deployment account; no change made.')
+            lines = path.read_text(encoding='utf-8').splitlines(keepends=True)
+            positions = [i for i, line in enumerate(lines) if re.match(r'^\s*(?:export\s+)?SECRET_KEY\s*=', line)]
+            if len(positions) > 1:
+                raise SystemExit('Multiple SECRET_KEY entries; no change made.')
+            new_key = secrets.token_urlsafe(64)
+            assert len(new_key) >= 50 and len(set(new_key)) >= 5
+            new_line = 'SECRET_KEY=' + new_key + '\n'
+            if positions:
+                lines[positions[0]] = new_line
+            else:
+                if lines and not lines[-1].endswith('\n'):
+                    lines.append('\n')
+                lines.append(new_line)
+            shutil.copy2(path, backup)
+            backup.chmod(stat.S_IRUSR | stat.S_IWUSR)
+            with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=path.parent, delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.writelines(lines)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temporary.chmod(stat.S_IRUSR | stat.S_IWUSR)
+            os.replace(temporary, path)
+            print('Generated a strong production Django key; previous environment retained with mode 0600.')
+            PY
+            docker compose -f docker-compose.prod.yml config --quiet
+
   diagnose-taxonomy-release:
     name: Diagnose taxonomy API startup
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/taxonomy-prod-incident'
