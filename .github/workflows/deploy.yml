@@ -42,6 +42,55 @@ jobs:
             docker image ls -a --format '{{.ID}} {{.CreatedAt}} {{.Repository}}:{{.Tag}}' | head -20
             docker compose -f docker-compose.prod.yml logs --no-color --tail=100 api
 
+  restore-last-healthy-api:
+    name: Restore last healthy API revision
+    needs: diagnose-taxonomy-release
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/taxonomy-prod-incident'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Restore previously verified EC2 API revision
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          EC2_APP_DIR: ${{ vars.EC2_APP_DIR }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          passphrase: ${{ secrets.EC2_PASSPHRASE }}
+          envs: EC2_APP_DIR
+          command_timeout: 10m
+          script: |
+            set -eu
+            cd "$EC2_APP_DIR"
+            [ "$(git rev-parse HEAD)" = 129fbf858e3628cd1edf96422c59cdde4b2f216f ]
+            [ "$(git branch --show-current)" = master ]
+            git diff --quiet
+            git diff --cached --quiet
+            if [ "$(docker compose -f docker-compose.prod.yml ps -q api | xargs -r docker inspect --format '{{.State.Health.Status}}')" = healthy ]; then
+              echo 'API has recovered; leaving current revision in place.'
+              exit 0
+            fi
+            git cat-file -e 5fe62d55e300c8e826c42839b073e94d29c6dbdd^{commit}
+            git merge-base --is-ancestor 5fe62d55e300c8e826c42839b073e94d29c6dbdd HEAD
+            git reset --hard 5fe62d55e300c8e826c42839b073e94d29c6dbdd
+            docker compose -f docker-compose.prod.yml config --quiet
+            docker compose -f docker-compose.prod.yml up -d --build --force-recreate --no-deps api
+            container="$(docker compose -f docker-compose.prod.yml ps -q api)"
+            [ -n "$container" ]
+            attempt=0
+            health=""
+            while [ "$attempt" -lt 60 ]; do
+              health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")"
+              [ "$health" = healthy ] && break
+              [ "$health" != unhealthy ] || { echo 'Rollback API is unhealthy' >&2; exit 1; }
+              attempt=$((attempt + 1))
+              sleep 5
+            done
+            [ "$health" = healthy ]
+            curl --fail --silent --show-error http://127.0.0.1:8000/health/ >/dev/null
+            echo 'Restored last healthy API revision 5fe62d55e300c8e826c42839b073e94d29c6dbdd'
+
   deploy:
     name: Deploy to EC2
     if: github.ref == 'refs/heads/master' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.conclusion == 'success' && vars.EC2_AUTO_DEPLOY == 'true'))
