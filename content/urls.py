@@ -2,13 +2,17 @@ from django.urls import path
 from .views import (
     ContentListCreateView, ContentDetailView, EpisodeDetailView, EpisodeListCreateView, MovieListView, SeasonDetailView, SeasonListCreateView, content_ids,
     ContentAdvertListCreateView, ContentAdvertDetailView, MiniSeriesListCreateView, MiniSeriesDetailView,
-    MediaUploadTargetView, search_view, ReindexView, HeroSettingsView
+    MediaUploadTargetView, search_view, ReindexView, HeroSettingsView,
+    categories_view, GenreListCreateView, GenreDetailView
     )
 from .multipart_views import MultipartVideoUploadView
 
 urlpatterns = [
     path('media/upload-target/', MediaUploadTargetView.as_view(), name='media-upload-target'),
     path('media/multipart/<str:action>/', MultipartVideoUploadView.as_view(), name='media-multipart-upload'),
+    path('categories/', categories_view, name='content-categories'),
+    path('genres/', GenreListCreateView.as_view(), name='genre-list-create'),
+    path('genres/<int:pk>/', GenreDetailView.as_view(), name='genre-detail'),
     path('', ContentListCreateView.as_view(), name='content-list-create'),
     path('<int:pk>/', ContentDetailView.as_view(), name='content-detail'),
     path('ids/', content_ids, name='content-ids'),

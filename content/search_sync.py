@@ -30,6 +30,10 @@ def content_document(content):
         'title': content.title,
         'genre': content.genre or '',
         'content_type': content.content_type or '',
+        'category': content.category or '',
+        'format': content.format or '',
+        'genres': [genre.name for genre in content.genres.all()],
+        'channel': content.channel.name,
         'description': content.description or '',
     }
 
@@ -43,7 +47,7 @@ def _wait_for_success(index, task):
 def upsert_content(content_id):
     """Read committed state so an edit in a transaction indexes its final values."""
     try:
-        content = Content.objects.filter(pk=content_id).first()
+        content = Content.objects.select_related('channel').prefetch_related('genres').filter(pk=content_id).first()
         if content is None:
             return
         if content.status != PUBLIC_STATUS:
