@@ -89,8 +89,8 @@ class ContentLifecycleTests(APITestCase):
             parent = Content.objects.create(title=kind, channel=self.channel, content_type=kind, status='preview')
             parent_id = Season.objects.create(content=parent, title='S1', season_number=1).pk if kind == 'series' else parent.pk
             endpoint = '/api/content/episodes/' if kind == 'series' else '/api/content/miniseries/'
-            for duration in ('90.25', None):
-                result = self.client.post(endpoint, {parent_field: parent_id, number_field: 1,
+            for number, duration in enumerate(('90.25', None), start=1):
+                result = self.client.post(endpoint, {parent_field: parent_id, number_field: number,
                     'title': 'Part', 'duration': duration, 'streaming_link': 'https://cdn.example/part.mp4'}, format='json')
                 self.assertEqual(result.status_code, 201)
                 self.assertEqual(result.data['duration'], '00:01:30.250000' if duration else None)

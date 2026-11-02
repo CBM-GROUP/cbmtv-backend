@@ -1,6 +1,6 @@
 from rest_framework import viewsets
-from .models import Content, Season, Episode, contentadverts, MiniSeries, HeroSettings
-from .serializers import ContentSerializer, SeasonSerializer, EpisodeSerializer, ContentAdvertSerializer, MiniSeriesSerializer, HeroSettingsSerializer
+from .models import Content, Genre, Season, Episode, contentadverts, MiniSeries, HeroSettings
+from .serializers import ContentSerializer, GenreSerializer, SeasonSerializer, EpisodeSerializer, ContentAdvertSerializer, MiniSeriesSerializer, HeroSettingsSerializer
 from rest_framework import generics
 from rest_framework import permissions
 from rest_framework.response import Response
@@ -19,6 +19,7 @@ from accounts.permissions import HasDashboardSection
 from common.idempotency import IdempotentCreateMixin
 from .publication import PUBLIC_STATUS, HasDashboardMediaAccess, dashboard_scope, visible_queryset
 from .search_sync import SearchUnavailable, get_search_index, content_document, upsert_content, remove_content
+from .taxonomy import CATEGORY_CHOICES, FORMAT_CHOICES, CATEGORY_FLAGS
 
 
 class MediaUploadTargetView(APIView):
@@ -53,7 +54,7 @@ def build_search_documents():
     worth *matching* on belong here: everything the client renders is read back
     from the database in `search_view`, never from the index.
     """
-    return [content_document(content) for content in Content.objects.filter(status=PUBLIC_STATUS).order_by('id')]
+    return [content_document(content) for content in Content.objects.filter(status=PUBLIC_STATUS).select_related('channel').prefetch_related('genres').order_by('id')]
 
 
 def rebuild_search_index():
@@ -120,28 +121,79 @@ def _database_matches(query):
     Meilisearch rather than replacing its relevance and typo matching. Keep this
     as a queryset so continuation pages never serialize the entire catalogue.
     """
-    fields = ('title', 'genre', 'description', 'channel__name',
-              'director', 'writer', 'country', 'content_type')
+    fields = ('title', 'genre', 'genres__name', 'description', 'channel__name',
+              'director', 'writer', 'country', 'content_type', 'category')
     aliases = {
-        'movies': ('movie',), 'movie': ('movie',),
-        'tv shows': ('original', 'series', 'miniseries'),
-        'tv show': ('original', 'series', 'miniseries'),
-        'series': ('series', 'miniseries'),
-        'documentaries': ('documentary',), 'documentary': ('documentary',),
-        'animations': ('animations',), 'animation': ('animations',),
+        'movies': 'movies', 'movie': 'movies',
+        'tv shows': 'tv_shows', 'tv show': 'tv_shows',
+        'documentaries': 'documentaries', 'documentary': 'documentaries',
+        'animations': 'animations', 'animation': 'animations',
     }
+    old_types = {'movies': 'movie', 'documentaries': 'documentary', 'animations': 'animations'}
+    def category_match(key):
+        match = Q(category=key)
+        if key in old_types:
+            match |= Q(category__isnull=True, content_type=old_types[key])
+        return match
     predicate = Q()
     for term in query.split():
         term_match = Q()
         for field in fields:
             term_match |= Q(**{f'{field}__icontains': term})
         if term.lower() in aliases:
-            term_match |= Q(content_type__in=aliases[term.lower()])
+            term_match |= category_match(aliases[term.lower()])
         predicate &= term_match
     category = aliases.get(query.lower())
     if category:
-        predicate |= Q(content_type__in=category)
-    return Content.objects.filter(status=PUBLIC_STATUS).filter(predicate).order_by('-created_at', '-id')
+        predicate |= category_match(category)
+    elif query.lower() == 'series':
+        predicate |= Q(format='series') | Q(content_type__in=('series', 'miniseries'))
+    return Content.objects.filter(status=PUBLIC_STATUS).filter(predicate).distinct().order_by('-created_at', '-id')
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def categories_view(request):
+    return Response([{'id': key, 'label': label} for key, label in CATEGORY_CHOICES])
+
+
+class GenreListCreateView(generics.ListCreateAPIView):
+    required_section = 'content'
+    serializer_class = GenreSerializer
+    pagination_class = StandardPagination
+
+    def get_queryset(self):
+        queryset = Genre.objects.all().order_by('name_key', 'pk')
+        if not dashboard_scope(self.request):
+            queryset = queryset.filter(is_active=True)
+        category = self.request.query_params.get('category')
+        if category:
+            if category not in CATEGORY_FLAGS:
+                raise ValidationError({'category': 'Choose one of the four primary categories.'})
+            queryset = queryset.filter(**{CATEGORY_FLAGS[category]: True})
+        return queryset
+
+    def get_permissions(self):
+        return [permissions.AllowAny()] if self.request.method in ('GET', 'HEAD', 'OPTIONS') else [HasDashboardSection()]
+
+
+class GenreDetailView(generics.RetrieveUpdateAPIView):
+    required_section = 'content'
+    serializer_class = GenreSerializer
+
+    def get_queryset(self):
+        queryset = Genre.objects.all()
+        if self.request.method not in ('GET', 'HEAD', 'OPTIONS') or dashboard_scope(self.request):
+            return queryset
+        return queryset.filter(is_active=True)
+
+    def perform_update(self, serializer):
+        genre = serializer.save()
+        ids = list(genre.titles.values_list('pk', flat=True))
+        transaction.on_commit(lambda: [upsert_content(pk) for pk in ids])
+
+    def get_permissions(self):
+        return [permissions.AllowAny()] if self.request.method in ('GET', 'HEAD', 'OPTIONS') else [HasDashboardSection()]
 
 
 @api_view(['GET'])
@@ -369,18 +421,38 @@ class ContentListCreateView(IdempotentCreateMixin, generics.ListCreateAPIView):
                 })
             queryset = queryset.filter(content_type=content_type)
 
+        category = self.request.query_params.get('category')
+        if category:
+            if category not in dict(CATEGORY_CHOICES):
+                raise ValidationError({'category': 'Choose one of the four primary categories.'})
+            queryset = queryset.filter(category=category)
+
+        # DRF reserves ?format= for renderer negotiation, so use content_format.
+        content_format = self.request.query_params.get('content_format')
+        if content_format:
+            if content_format not in dict(FORMAT_CHOICES):
+                raise ValidationError({'content_format': 'Choose standalone or series.'})
+            queryset = queryset.filter(format=content_format)
+
+        genre_id = self.request.query_params.get('genre_id')
+        if genre_id:
+            if not str(genre_id).isdigit():
+                raise ValidationError({'genre_id': 'Use a positive genre ID.'})
+            queryset = queryset.filter(genres__id=int(genre_id))
+
         genre = self.request.query_params.get('genre')
         if genre:
             # Genre is a free-text CharField holding values like "Short Movie",
             # so match loosely rather than requiring an exact string.
-            queryset = queryset.filter(genre__icontains=str(genre).strip('/'))
+            term = str(genre).strip('/')
+            queryset = queryset.filter(Q(genre__icontains=term) | Q(genres__name__icontains=term))
 
         for param, field in (('featured', 'is_featured'), ('trending', 'is_trending')):
             value = self.request.query_params.get(param)
             if value:
                 queryset = queryset.filter(**{field: parse_bool_param(param, value)})
 
-        return queryset
+        return queryset.distinct()
 
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):

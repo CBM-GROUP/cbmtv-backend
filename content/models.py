@@ -1,5 +1,28 @@
 from django.db import models
 from channel.models import Channel
+from .taxonomy import CATEGORY_CHOICES, FORMAT_CHOICES
+
+
+class Genre(models.Model):
+    name = models.CharField(max_length=200)
+    name_key = models.CharField(max_length=400, unique=True, editable=False)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.PROTECT, related_name='children')
+    for_movies = models.BooleanField(default=False)
+    for_tv_shows = models.BooleanField(default=False)
+    for_documentaries = models.BooleanField(default=False)
+    for_animations = models.BooleanField(default=False)
+
+    def save(self, *args, **kwargs):
+        self.name = self.name.strip()
+        self.name_key = self.name.casefold()
+        if kwargs.get('update_fields') is not None and 'name' in kwargs['update_fields']:
+            kwargs['update_fields'] = set(kwargs['update_fields']) | {'name_key'}
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
 
 # Create your models here.
 class Content(models.Model):
@@ -11,6 +34,7 @@ class Content(models.Model):
         ('original', 'Original'),
         ('documentary', 'Documentary'),
         ('animations', 'Animations'),
+        ('tv_show', 'TV Show'),
     ]
     STATUS_TYPES = [
         ('preview', 'Preview'),
@@ -22,6 +46,9 @@ class Content(models.Model):
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     content_type = models.CharField(max_length=20, choices=CONTENT_TYPES)
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, null=True, blank=True, db_index=True)
+    format = models.CharField(max_length=20, choices=FORMAT_CHOICES, null=True, blank=True, db_index=True)
+    genres = models.ManyToManyField(Genre, blank=True, related_name='titles')
     trailer_link = models.URLField(blank=True, null=True)
     streaming_link = models.URLField(blank=True, null=True) #only for non-episodic content
     thumbnail = models.URLField(blank=True, null=True)
