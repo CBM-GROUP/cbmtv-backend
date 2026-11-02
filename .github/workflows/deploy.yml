@@ -16,6 +16,80 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  audit-search-index:
+    name: Audit production search index without changes
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/ops/search-index-audit'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Compare approved database titles with active Meilisearch documents
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          EC2_APP_DIR: ${{ vars.EC2_APP_DIR }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          passphrase: ${{ secrets.EC2_PASSPHRASE }}
+          envs: EC2_APP_DIR
+          command_timeout: 3m
+          script: |
+            set -eu
+            cd "$EC2_APP_DIR"
+            docker compose -f docker-compose.prod.yml exec -T api python - <<'PY'
+            import json
+            import os
+            from urllib.parse import quote
+
+            import django
+            import requests
+
+            os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cbmtv.settings')
+            django.setup()
+            from django.conf import settings
+            from content.models import Content
+
+            uid = settings.MEILISEARCH_INDEX
+            base = settings.MEILISEARCH_URL.rstrip('/')
+            if not base:
+                raise SystemExit('Meilisearch URL is not configured.')
+            headers = {'X-Meili-API-Key': settings.MEILISEARCH_MASTER_KEY}
+            index_url = f'{base}/indexes/{quote(uid, safe="")}'
+            def get(path, **params):
+                response = requests.get(index_url + path, headers=headers, params=params, timeout=10)
+                response.raise_for_status()
+                return response.json()
+
+            stats = get('/stats')
+            config = get('/settings')
+            approved = set(Content.objects.filter(status='approved').values_list('id', flat=True))
+            documents = []
+            offset = 0
+            while True:
+                page = get('/documents', offset=offset, limit=1000)
+                rows = page.get('results', [])
+                documents.extend(rows)
+                offset += len(rows)
+                if len(rows) < 1000:
+                    break
+                if offset > 100000:
+                    raise SystemExit('Index audit exceeded the safe document limit.')
+            indexed = {int(row['id']) for row in documents if str(row.get('id', '')).isdigit()}
+            print(json.dumps({
+                'index': uid,
+                'approved_database_count': len(approved),
+                'index_reported_count': stats.get('numberOfDocuments'),
+                'indexed_document_count': len(documents),
+                'approved_missing_count': len(approved - indexed),
+                'unapproved_or_unknown_count': len(indexed - approved),
+                'field_coverage': {field: sum(field in row for row in documents)
+                                   for field in ('category', 'format', 'genres', 'channel', 'director', 'cast')},
+                'searchable_attributes': config.get('searchableAttributes'),
+                'filterable_attributes': config.get('filterableAttributes'),
+                'ranking_rules': config.get('rankingRules'),
+            }, sort_keys=True))
+            PY
+
   deploy:
     name: Deploy to EC2
     if: github.ref == 'refs/heads/master' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.conclusion == 'success' && vars.EC2_AUTO_DEPLOY == 'true'))
