@@ -74,6 +74,14 @@ jobs:
             git cat-file -e 5fe62d55e300c8e826c42839b073e94d29c6dbdd^{commit}
             git merge-base --is-ancestor 5fe62d55e300c8e826c42839b073e94d29c6dbdd HEAD
             git reset --hard 5fe62d55e300c8e826c42839b073e94d29c6dbdd
+            if [ -f .env.branch2-backup ]; then
+              if cp -p .env.branch2-backup .env; then
+                chmod 600 .env
+                echo 'Restored the pre-rotation production environment.'
+              else
+                echo 'Could not restore the prior environment; continuing API recovery.' >&2
+              fi
+            fi
             docker compose -f docker-compose.prod.yml config --quiet
             docker compose -f docker-compose.prod.yml up -d --build --force-recreate --no-deps api
             container="$(docker compose -f docker-compose.prod.yml ps -q api)"
