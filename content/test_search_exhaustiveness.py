@@ -37,7 +37,7 @@ class ExhaustiveSearchTests(APITestCase):
         index = MagicMock()
         index.search.return_value = {'hits': [{'id': first.pk}, {'id': first.pk}]}
         with patch('content.views.get_search_index', return_value=index):
-            response = self.client.get(self.url, {'q': 'Drama'})
+            response = self.client.get(self.url, {'q': 'Drama', 'search_by': 'genre'})
         self.assertEqual([item['id'] for item in response.data['hits']], [first.pk, second.pk])
         self.assertEqual(response.data['total'], 2)
 
@@ -77,8 +77,8 @@ class ExhaustiveSearchTests(APITestCase):
         index = MagicMock()
         index.search.side_effect = lambda _query, options: {'hits': [{'id': pk} for pk in ids[:options['limit']]]}
         with patch('content.views.get_search_index', return_value=index):
-            response = self.client.get(self.url, {'q': 'typoonlytoken', 'limit': 8, 'offset': 128})
-            capped_page = self.client.get(self.url, {'q': 'typoonlytoken', 'limit': 100000})
+            response = self.client.get(self.url, {'q': 'result', 'limit': 8, 'offset': 128})
+            capped_page = self.client.get(self.url, {'q': 'result', 'limit': 100000})
         self.assertEqual(response.data['total'], 137)
         self.assertEqual([row['id'] for row in response.data['hits']], ids[128:136])
         self.assertEqual(response.data['next_offset'], 136)
@@ -102,7 +102,7 @@ class ExhaustiveSearchTests(APITestCase):
         with patch('content.views.get_search_index', side_effect=SearchUnavailable('fixture offline')):
             for term in ['CBM Originals', 'Kampala', 'Amina', 'Uganda', 'Writer Example', 'journey Uganda', 'Originals Adventure']:
                 with self.subTest(term=term):
-                    response = self.client.get(self.url, {'q': term})
+                    response = self.client.get(self.url, {'q': term, 'search_by': 'everything'})
                     self.assertEqual([item['id'] for item in response.data['hits']], [row.pk])
 
     def test_category_words_do_not_change_documentary_or_animation_classification(self):
@@ -110,7 +110,7 @@ class ExhaustiveSearchTests(APITestCase):
         animation = self.content('Animated story', content_type='animations')
         with patch('content.views.get_search_index', side_effect=SearchUnavailable('fixture offline')):
             for term, row in [('Documentaries', documentary), ('Animation', animation)]:
-                response = self.client.get(self.url, {'q': term})
+                response = self.client.get(self.url, {'q': term, 'search_by': 'everything'})
                 self.assertEqual(response.data['hits'][0]['content_type'], row.content_type)
 
     def test_invalid_offsets_are_rejected_and_large_offsets_end_cleanly(self):

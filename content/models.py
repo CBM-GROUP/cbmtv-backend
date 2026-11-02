@@ -55,6 +55,7 @@ class Content(models.Model):
     size = models.CharField(max_length=20, blank=True, null=True)
     duration = models.DurationField(blank=True, null=True)
     director = models.CharField(max_length=200, blank=True, null=True)
+    cast = models.JSONField(default=list, blank=True)
     writer = models.CharField(max_length=200, blank=True, null=True)
     genre = models.CharField(max_length=100, blank=True, null=True)
     country = models.CharField(max_length=100, blank=True, null=True)

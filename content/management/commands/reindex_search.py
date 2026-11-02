@@ -38,12 +38,11 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from django.conf import settings
 
-        target = settings.MEILISEARCH_URL or '(unset)'
         index_name = settings.MEILISEARCH_INDEX
 
         if options['dry_run']:
             documents = build_search_documents()
-            self.stdout.write(f'target index : {index_name} on {target}')
+            self.stdout.write(f'target index : {index_name}')
             self.stdout.write(f'would index  : {len(documents)} document(s)')
             for document in documents[:10]:
                 self.stdout.write(f'  {document["id"]}  {document["title"]}')
@@ -52,15 +51,15 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING('dry run -- nothing was written'))
             return
 
-        self.stdout.write(f'Rebuilding "{index_name}" on {target} ...')
+        self.stdout.write(f'Rebuilding "{index_name}" ...')
 
         try:
-            indexed = rebuild_search_index()
+            result = rebuild_search_index()
         except SearchUnavailable as exc:
             raise CommandError(str(exc))
         except Exception as exc:
             raise CommandError(f'Reindex failed: {exc}')
 
         self.stdout.write(
-            self.style.SUCCESS(f'Indexed {indexed} document(s) to Meilisearch.')
+            self.style.SUCCESS(f'Indexed {result["indexed"]} document(s) to Meilisearch. Previous index: {result["backup_index"]}')
         )

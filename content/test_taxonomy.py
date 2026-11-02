@@ -64,6 +64,20 @@ class TaxonomyAPITests(APITestCase):
         self.assertEqual(self.client.patch(f"/api/content/genres/{child['id']}/", {'is_active': False}, format='json').status_code, 200)
         self.assertFalse(Genre.objects.get(pk=child['id']).is_active)
 
+    def test_parent_genre_rename_refreshes_titles_assigned_to_children(self):
+        parent = self.genre('Nature', ['documentaries'])
+        child = self.genre('Wildlife', ['documentaries'], parent=parent['id'])
+        title = Content.objects.create(title='Savanna', content_type='documentary',
+                                       category='documentaries', format='standalone',
+                                       channel=self.channel, status='approved')
+        title.genres.add(child['id'])
+        with patch('content.views.upsert_content') as upsert:
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self.client.patch(f"/api/content/genres/{parent['id']}/",
+                                             {'name': 'Natural World'}, format='json')
+        self.assertEqual(response.status_code, 200)
+        upsert.assert_called_once_with(title.pk)
+
     def test_content_assignment_filters_publication_and_channel(self):
         comedy = self.genre('Comedy', ['movies', 'tv_shows', 'animations'])
         action = self.genre('Action', ['movies'])
@@ -89,7 +103,7 @@ class TaxonomyAPITests(APITestCase):
         for params in ({'category': 'movies'}, {'genre_id': comedy['id']}, {'genre': 'Comedy'},
                        {'content_format': 'standalone'}, {'channel': self.channel.pk}):
             self.assertEqual(self.client.get('/api/content/', params).data['count'], 1)
-        self.assertEqual(self.client.get('/api/content/search/', {'q': 'Comedy'}).data['hits'][0]['id'], movie['id'])
+        self.assertEqual(self.client.get('/api/content/search/', {'q': 'Comedy', 'search_by': 'genre'}).data['hits'][0]['id'], movie['id'])
         self.assertEqual(self.client.get('/api/content/', {'channel': self.other_channel.pk}).data['count'], 0)
         self.assertEqual(self.client.get('/api/content/', {'category': 'documentaries'}).data['count'], 0)
         self.client.force_authenticate(self.editor)
