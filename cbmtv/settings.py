@@ -206,6 +206,7 @@ INSTALLED_APPS = [
     'channel',
     'content',
     'library',
+    'homepage',
     'corsheaders',
     'common',
 ]

@@ -13,6 +13,8 @@ class LegacyTaxonomyUpgradeTests(TransactionTestCase):
         before = [('content', '0014_hero_settings_and_advert_placement')]
         after = [('content', '0015_content_taxonomy')]
         executor = MigrationExecutor(connection)
+        latest = executor.loader.graph.leaf_nodes()
+        self.addCleanup(lambda: MigrationExecutor(connection).migrate(latest))
         executor.migrate(before)
         old = executor.loader.project_state(before).apps
         ids = {}

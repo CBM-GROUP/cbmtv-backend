@@ -17,7 +17,7 @@ from common.media_storage import MediaStorageError, create_upload_target
 from common.pagination import StandardPagination
 from accounts.permissions import HasDashboardSection
 from common.idempotency import IdempotentCreateMixin
-from .publication import PUBLIC_STATUS, HasDashboardMediaAccess, dashboard_scope, visible_queryset
+from .publication import PUBLIC_STATUS, public_eligibility, HasDashboardMediaAccess, dashboard_scope, visible_queryset
 from .search_sync import SearchUnavailable, get_search_index, content_document, upsert_content, remove_content
 from .search_reindex import rebuild_search_index as swap_search_index
 from .taxonomy import CATEGORY_CHOICES, FORMAT_CHOICES, CATEGORY_FLAGS
@@ -55,7 +55,7 @@ def build_search_documents():
     worth *matching* on belong here: everything the client renders is read back
     from the database in `search_view`, never from the index.
     """
-    return [content_document(content) for content in Content.objects.filter(status=PUBLIC_STATUS).select_related('channel').prefetch_related('genres__parent').order_by('id')]
+    return [content_document(content) for content in Content.objects.filter(**public_eligibility()).select_related('channel').prefetch_related('genres__parent').order_by('id')]
 
 
 def rebuild_search_index():
@@ -93,7 +93,7 @@ def _rank_ordered(ids):
     longer holds simply fall out, which is what turns a stale index into fewer
     results instead of links to the wrong programme.
     """
-    rows = Content.objects.filter(status=PUBLIC_STATUS).in_bulk(ids)
+    rows = Content.objects.filter(**public_eligibility()).in_bulk(ids)
     return [rows[i] for i in ids if i in rows]
 
 
@@ -154,7 +154,7 @@ def _database_matches(query, search_by='title'):
         predicate |= category_match(category)
     elif search_by == 'everything' and query.lower() == 'series':
         predicate |= Q(format='series') | Q(content_type__in=('series', 'miniseries'))
-    return Content.objects.filter(status=PUBLIC_STATUS).filter(predicate).distinct().order_by('-created_at', '-id')
+    return Content.objects.filter(**public_eligibility()).filter(predicate).distinct().order_by('-created_at', '-id')
 
 
 @api_view(['GET'])
@@ -252,7 +252,7 @@ def search_view(request):
     except (TypeError, ValueError):
         return Response({'offset': 'Use a non-negative integer.'}, status=400)
 
-    published = Content.objects.filter(status=PUBLIC_STATUS)
+    published = Content.objects.filter(**public_eligibility())
     category = request.query_params.get('category')
     if category:
         if category not in dict(CATEGORY_CHOICES):
@@ -351,7 +351,7 @@ class ReindexView(APIView):
 def content_ids(request):
     """Return content IDs with optional filtering by content type"""
     content_type = request.GET.get('type', None)
-    queryset = Content.objects.all() if dashboard_scope(request) else Content.objects.filter(status=PUBLIC_STATUS)
+    queryset = Content.objects.all() if dashboard_scope(request) else Content.objects.filter(**public_eligibility())
     
     # Get all available content types from the model choices
     available_types = [choice[0] for choice in Content.CONTENT_TYPES]

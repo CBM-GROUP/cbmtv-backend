@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from content.models import Content, Episode, MiniSeries
 from content.serializers import ContentSerializer
-from content.publication import PUBLIC_STATUS
+from content.publication import PUBLIC_STATUS, public_eligibility
 from .models import SavedItem, WatchProgress
 
 
@@ -17,7 +17,7 @@ class SavedItemSerializer(serializers.ModelSerializer):
 
 
 class SaveContentSerializer(serializers.Serializer):
-    content = serializers.PrimaryKeyRelatedField(queryset=Content.objects.filter(status=PUBLIC_STATUS))
+    content = serializers.PrimaryKeyRelatedField(queryset=Content.objects.filter(**public_eligibility()))
 
 
 class WatchProgressSerializer(serializers.ModelSerializer):
@@ -33,12 +33,12 @@ class WatchProgressSerializer(serializers.ModelSerializer):
 
 
 class RecordProgressSerializer(serializers.Serializer):
-    content = serializers.PrimaryKeyRelatedField(queryset=Content.objects.filter(status=PUBLIC_STATUS))
+    content = serializers.PrimaryKeyRelatedField(queryset=Content.objects.filter(**public_eligibility()))
     episode = serializers.PrimaryKeyRelatedField(
-        queryset=Episode.objects.filter(season__content__status=PUBLIC_STATUS).select_related('season'), required=False, allow_null=True
+        queryset=Episode.objects.filter(**public_eligibility('season__content__')).select_related('season'), required=False, allow_null=True
     )
     miniseries = serializers.PrimaryKeyRelatedField(
-        queryset=MiniSeries.objects.filter(content__status=PUBLIC_STATUS), required=False, allow_null=True
+        queryset=MiniSeries.objects.filter(**public_eligibility('content__')), required=False, allow_null=True
     )
     position_seconds = serializers.IntegerField(min_value=0)
     duration_seconds = serializers.IntegerField(min_value=0, required=False, default=0)
