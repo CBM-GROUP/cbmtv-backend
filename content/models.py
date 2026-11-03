@@ -1,4 +1,5 @@
-from django.db import models
+from django.db import models, transaction
+from django.utils import timezone
 from channel.models import Channel
 from .taxonomy import CATEGORY_CHOICES, FORMAT_CHOICES
 
@@ -14,6 +15,7 @@ class Genre(models.Model):
     for_documentaries = models.BooleanField(default=False)
     for_animations = models.BooleanField(default=False)
 
+    @transaction.atomic
     def save(self, *args, **kwargs):
         self.name = self.name.strip()
         self.name_key = self.name.casefold()
@@ -67,6 +69,29 @@ class Content(models.Model):
     is_trending = models.BooleanField(default=False, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
+    first_published_at = models.DateTimeField(null=True, blank=True, editable=False, db_index=True)
+    publication_history_unknown = models.BooleanField(default=False, editable=False)
+
+    @transaction.atomic
+    def save(self, *args, **kwargs):
+        # Unknown legacy history stays unknown, including after republishing.
+        # Protect every writer, including admin/scripts outside the REST API.
+        fields = kwargs.get('update_fields')
+        channel_id = self.channel_id
+        if not self._state.adding and fields is not None and not {'channel', 'channel_id'} & set(fields):
+            channel_id = type(self).objects.values_list('channel_id', flat=True).get(pk=self.pk)
+        channel = Channel.objects.select_for_update().get(pk=channel_id)
+        previous = None if self._state.adding else type(self).objects.select_for_update().filter(pk=self.pk).values(
+            'status', 'first_published_at', 'publication_history_unknown',
+        ).first()
+        self.first_published_at = previous['first_published_at'] if previous else None
+        self.publication_history_unknown = previous['publication_history_unknown'] if previous else False
+        effective_status = self.status if fields is None or 'status' in fields or previous is None else previous['status']
+        if channel.is_active and not self.publication_history_unknown and effective_status == 'approved' and not self.first_published_at:
+            self.first_published_at = timezone.now()
+            if fields is not None:
+                kwargs['update_fields'] = set(fields) | {'first_published_at'}
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return self.title

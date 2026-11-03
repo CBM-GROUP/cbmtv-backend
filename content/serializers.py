@@ -150,22 +150,45 @@ class ContentSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         # Reload under the lock: DRF may have fetched this instance before an
         # overlapping editorial transition committed. Never save stale status.
-        with transaction.atomic():
-            current = Content.objects.select_for_update().get(pk=instance.pk)
-            previous_status = current.status
-            request = self.context.get('request')
-            expected = request.headers.get('If-Publication-Status') if request else None
-            if 'status' in validated_data and expected is not None and expected != previous_status:
-                raise OperationConflict('Publication status changed. Refresh before trying again.')
-            content = super().update(current, validated_data)
-            if content.status != previous_status:
-                actor_id = request.user.pk if request else None
-                content_id, new_status = content.pk, content.status
-                transaction.on_commit(lambda: logging.getLogger('content.publication').info(
-                    'Publication changed actor_id=%s content_id=%s from=%s to=%s',
-                    actor_id, content_id, previous_status, new_status,
-                ))
-            return content
+        from channel.models import Channel
+
+        class ParentOwnershipChanged(Exception):
+            pass
+
+        for _ in range(3):
+            try:
+                with transaction.atomic():
+                    # A reassignment can commit while this writer waits on the
+                    # old channel. Reject that row before acquiring another
+                    # parent lock after the child lock (activation locks parent
+                    # first). PostgreSQL rechecks this predicate after waiting.
+                    channel_ids = set(Content.objects.filter(pk=instance.pk).values_list('channel_id', flat=True))
+                    if 'channel' in validated_data:
+                        channel_ids.add(validated_data['channel'].pk)
+                    list(Channel.objects.select_for_update().filter(pk__in=channel_ids).order_by('pk'))
+                    current = Content.objects.select_for_update().filter(pk=instance.pk, channel_id__in=channel_ids).first()
+                    if current is None:
+                        if not Content.objects.filter(pk=instance.pk).exists():
+                            raise Content.DoesNotExist()
+                        # Roll back the attempt's savepoint to release its locks.
+                        raise ParentOwnershipChanged()
+                    previous_status = current.status
+                    request = self.context.get('request')
+                    expected = request.headers.get('If-Publication-Status') if request else None
+                    if 'status' in validated_data and expected is not None and expected != previous_status:
+                        raise OperationConflict('Publication status changed. Refresh before trying again.')
+                    content = super().update(current, validated_data)
+                    if content.status != previous_status:
+                        actor_id = request.user.pk if request else None
+                        content_id, new_status = content.pk, content.status
+                        transaction.on_commit(lambda: logging.getLogger('content.publication').info(
+                            'Publication changed actor_id=%s content_id=%s from=%s to=%s',
+                            actor_id, content_id, previous_status, new_status,
+                        ))
+                    return content
+            except ParentOwnershipChanged:
+                continue
+        raise OperationConflict('Content channel changed repeatedly. Refresh before trying again.')
 
     def create(self, validated_data):
         # Status changes belong to an explicit edit after creation. This also

@@ -42,7 +42,7 @@ class ChannelApiTests(APITestCase):
         first = response.data["results"][0]
         self.assertEqual(
             set(first.keys()),
-            {"id", "name", "description", "logo_url", "cover_image_url"},
+            {"id", "name", "description", "logo_url", "cover_image_url", "is_active"},
         )
 
     def test_list_is_ordered_by_name(self):

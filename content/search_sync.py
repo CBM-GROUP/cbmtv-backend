@@ -60,7 +60,7 @@ def upsert_content(content_id):
         content = Content.objects.select_related('channel').prefetch_related('genres__parent').filter(pk=content_id).first()
         if content is None:
             return
-        if content.status != PUBLIC_STATUS:
+        if content.status != PUBLIC_STATUS or not content.channel.is_active:
             remove_content(content_id)
             return
         index = get_search_index()

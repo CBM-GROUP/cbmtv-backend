@@ -8,6 +8,11 @@ from accounts.permissions import dashboard_permissions
 PUBLIC_STATUS = 'approved'
 
 
+def public_eligibility(prefix=''):
+    """One publication boundary for homepage, catalogue, search and library."""
+    return {f'{prefix}status': PUBLIC_STATUS, f'{prefix}channel__is_active': True}
+
+
 def dashboard_sections(user):
     return tuple(dashboard_permissions(user))
 
@@ -36,4 +41,4 @@ def dashboard_scope(request):
 def visible_queryset(request, queryset, status_field='status'):
     if request.method not in ('GET', 'HEAD', 'OPTIONS') or dashboard_scope(request):
         return queryset
-    return queryset.filter(**{status_field: PUBLIC_STATUS})
+    return queryset.filter(**public_eligibility(status_field.removesuffix('status')))

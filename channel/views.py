@@ -9,7 +9,8 @@ from content.serializers import ContentSerializer
 from content.publication import visible_queryset
 from content.search_sync import upsert_content
 from django.db import transaction
-from accounts.permissions import HasDashboardSection
+from accounts.permissions import HasDashboardSection, dashboard_permissions
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from common.idempotency import IdempotentCreateMixin
 
 
@@ -29,6 +30,19 @@ class ChannelViewSet(IdempotentCreateMixin, viewsets.ModelViewSet):
     serializer_class = ChannelSerializer
     permission_classes = [HasDashboardSection]  # Default permissions
     pagination_class = StandardPagination
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.request.method not in ('GET', 'HEAD', 'OPTIONS'):
+            return queryset
+        scope = self.request.query_params.get('scope')
+        if scope is not None:
+            if scope != 'dashboard':
+                raise ValidationError({'scope': 'Use scope=dashboard for management reads.'})
+            if not set(dashboard_permissions(self.request.user)) & {'channels', 'content'}:
+                raise PermissionDenied('Channel or Content section access is required.')
+            return queryset
+        return queryset.filter(is_active=True)
 
     def perform_update(self, serializer):
         channel = serializer.save()

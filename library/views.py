@@ -19,7 +19,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.pagination import StandardPagination
-from content.publication import PUBLIC_STATUS
+from common.http import PrivateResponseMixin
+from content.publication import PUBLIC_STATUS, public_eligibility
 from .models import SavedItem, WatchProgress
 from .serializers import (
     RecordProgressSerializer,
@@ -31,14 +32,14 @@ from .serializers import (
 TRUE_VALUES = ('true', '1', 'yes')
 
 
-class SavedListCreateView(generics.ListAPIView):
+class SavedListCreateView(PrivateResponseMixin, generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = SavedItemSerializer
     pagination_class = StandardPagination
 
     def get_queryset(self):
         return (
-            SavedItem.objects.filter(user=self.request.user, content__status=PUBLIC_STATUS)
+            SavedItem.objects.filter(user=self.request.user, **public_eligibility('content__'))
             .select_related('content')
             .order_by('-created_at', '-id')
         )
@@ -55,19 +56,19 @@ class SavedListCreateView(generics.ListAPIView):
         )
 
 
-class SavedIdsView(APIView):
+class SavedIdsView(PrivateResponseMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         ids = (
-            SavedItem.objects.filter(user=request.user, content__status=PUBLIC_STATUS)
+            SavedItem.objects.filter(user=request.user, **public_eligibility('content__'))
             .order_by('-created_at', '-id')
             .values_list('content_id', flat=True)
         )
         return Response(list(ids))
 
 
-class SavedDeleteView(APIView):
+class SavedDeleteView(PrivateResponseMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def delete(self, request, content_id):
@@ -75,14 +76,14 @@ class SavedDeleteView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class ProgressListCreateView(generics.ListAPIView):
+class ProgressListCreateView(PrivateResponseMixin, generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = WatchProgressSerializer
     pagination_class = StandardPagination
 
     def get_queryset(self):
         queryset = (
-            WatchProgress.objects.filter(user=self.request.user, content__status=PUBLIC_STATUS)
+            WatchProgress.objects.filter(user=self.request.user, **public_eligibility('content__'))
             .select_related('content')
             .order_by('-updated_at', '-id')
         )
@@ -112,8 +113,16 @@ class ProgressListCreateView(generics.ListAPIView):
         return Response(WatchProgressSerializer(progress).data, status=status.HTTP_200_OK)
 
 
-class ProgressDeleteView(APIView):
+class ProgressDeleteView(PrivateResponseMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, content_id):
+        from django.shortcuts import get_object_or_404
+        progress = get_object_or_404(
+            WatchProgress.objects.select_related('content').prefetch_related('content__genres'),
+            user=request.user, content_id=content_id, **public_eligibility('content__'),
+        )
+        return Response(WatchProgressSerializer(progress).data)
 
     def delete(self, request, content_id):
         WatchProgress.objects.filter(user=request.user, content_id=content_id).delete()
