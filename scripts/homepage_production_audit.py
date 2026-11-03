@@ -134,5 +134,83 @@ print(json.dumps({'phase': 'writer_processes', 'counts': {
     name: sum(bool(re.search(pattern, line)) for line in processes)
     for name, pattern in {'web_workers': r'^\s*gunicorn\b', 'celery': r'^\s*celery\b',
                           'rq': r'^\s*rq\b', 'python_management_commands': r'^\s*python\S*\s+\S*python\S*\s+\S*manage\.py\b'}.items()}}), flush=True)
+
+# Complete the schedule inventory without forwarding crontab contents or secrets.
+privileged_audit = r'''
+import json,os,re,subprocess
+from pathlib import Path
+data={'phase':'privileged_backup_inventory','root_inventory':os.geteuid()==0,'cron_sources':[],'backup_configuration_paths':[]}
+tools=('pg_dump','pg_basebackup','pgbackrest','wal-g','barman','restic','duplicity','rclone')
+for root in (Path('/var/spool/cron/crontabs'),Path('/etc/cron.d')):
+    if not root.is_dir(): continue
+    try:
+        for path in list(root.iterdir())[:100]:
+            if not path.is_file():continue
+            content=path.read_text(errors='replace')
+            data['cron_sources'].append({'source':str(path),'backup_tools':[tool for tool in tools if tool in content],
+                'potential_application_writer':bool(re.search(r'manage\.py|celery|\brq\b|psql|cbmtv|docker\s+(compose|exec)',content))})
+    except PermissionError: data['root_inventory']=False
+for p in ('/etc/pgbackrest','/etc/wal-g.d','/etc/barman','/etc/restic','/root/.config/restic','/root/backups','/home/ubuntu/backups','/opt/cbmtv-backend/backups'):
+    if Path(p).exists():data['backup_configuration_paths'].append(p)
+env=Path('/opt/cbmtv-backend/.env')
+if env.is_file():
+    data['backup_related_env_names']=[line.split('=',1)[0].strip() for line in env.read_text().splitlines() if '=' in line and not line.lstrip().startswith('#') and re.search(r'BACKUP|RESTIC|BARMAN|WALG|PGREST',line.split('=',1)[0],re.I)]
+units=subprocess.run(['systemctl','list-unit-files','--type=service','--no-pager','--no-legend'],text=True,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+data['relevant_service_units']=[line.split()[0] for line in units.stdout.splitlines() if re.search(r'backup|postgres|cbmtv|celery|\brq\b|restic|barman',line,re.I)]
+print(json.dumps(data,sort_keys=True))
+'''
+try:
+    print(command(['sudo','-n','python3','-'], input=privileged_audit), flush=True)
+except RuntimeError:
+    print(json.dumps({'phase':'privileged_backup_inventory','root_inventory':False}),flush=True)
+
+# Query only AWS resources attached to this instance; never log credentials,
+# snapshot descriptions, tags, recovery-point metadata or database contents.
+try:
+    from urllib.request import Request, urlopen
+    token = urlopen(Request('http://169.254.169.254/latest/api/token',method='PUT',
+        headers={'X-aws-ec2-metadata-token-ttl-seconds':'60'}),timeout=3).read().decode()
+    identity = json.load(urlopen(Request('http://169.254.169.254/latest/dynamic/instance-identity/document',
+        headers={'X-aws-ec2-metadata-token':token}),timeout=3))
+    aws_audit = r'''
+import json,os
+import boto3
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError,ClientError
+identity=json.loads(os.environ['HOMEPAGE_INSTANCE_IDENTITY'])
+config=Config(connect_timeout=3,read_timeout=6,retries={'max_attempts':1})
+data={'phase':'aws_snapshot_inventory','metadata_available':True,'volume_encryption':[],'snapshots':[],'recovery_points':[]}
+try:
+    ec2=boto3.client('ec2',region_name=identity['region'],config=config)
+    instance=ec2.describe_instances(InstanceIds=[identity['instanceId']])['Reservations'][0]['Instances'][0]
+    volumes=[item['Ebs']['VolumeId'] for item in instance.get('BlockDeviceMappings',[]) if 'Ebs' in item]
+    if volumes:
+        for volume in ec2.describe_volumes(VolumeIds=volumes)['Volumes']:
+            data['volume_encryption'].append({'encrypted':volume['Encrypted'],'kms_key_configured':bool(volume.get('KmsKeyId'))})
+        snaps=ec2.describe_snapshots(OwnerIds=['self'],Filters=[{'Name':'volume-id','Values':volumes}],MaxResults=100)
+        for snap in snaps.get('Snapshots',[]):
+            data['snapshots'].append({'id':snap['SnapshotId'],'state':snap['State'],'created_at':str(snap['StartTime']),'encrypted':snap['Encrypted']})
+        data['snapshot_inventory_truncated']=bool(snaps.get('NextToken'))
+    resources=[f"arn:aws:ec2:{identity['region']}:{identity['accountId']}:instance/{identity['instanceId']}"]
+    resources += [f"arn:aws:ec2:{identity['region']}:{identity['accountId']}:volume/{volume}" for volume in volumes]
+    backup=boto3.client('backup',region_name=identity['region'],config=config)
+    for resource in resources:
+        try:
+            points=backup.list_recovery_points_by_resource(ResourceArn=resource,MaxResults=100)
+            for point in points.get('RecoveryPoints',[]):
+                data['recovery_points'].append({'status':point.get('Status'),'created_at':str(point.get('CreationDate'))})
+        except ClientError as exc: data['aws_backup_error_code']=exc.response['Error']['Code']
+except ClientError as exc: data['inventory_error_code']=exc.response['Error']['Code']
+except BotoCoreError as exc: data['inventory_error_type']=type(exc).__name__
+data['restore_verified']=False
+print(json.dumps(data,sort_keys=True))
+'''
+    print(command(compose + ['exec','-T','-e','AWS_EC2_METADATA_DISABLED=true','-e',
+        'HOMEPAGE_INSTANCE_IDENTITY='+json.dumps(identity), 'api','python','-'],input=aws_audit),flush=True)
+except Exception as exc:
+    print(json.dumps({'phase':'aws_snapshot_inventory','metadata_available':False,
+                      'error_type':type(exc).__name__,'restore_verified':False}),flush=True)
+print(json.dumps({'phase':'pg_dump_tool','available_in_postgres_container':bool(
+    command(compose + ['exec','-T','postgres','sh','-c','command -v pg_dump']))}),flush=True)
 print(json.dumps({'phase': 'complete', 'production_writes_performed': False,
                   'backup_restore_verified': False, 'publication_pause_established': False}), flush=True)
