@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from pathlib import Path
+import uuid
+from django.utils import timezone as django_timezone
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
@@ -14,6 +16,7 @@ from common.http import PrivateResponseMixin
 from common.media_storage import build_delivery_url
 from .models import Content, Episode, MiniSeries, MediaAsset
 from .publication import public_eligibility
+from discovery.models import PlaybackSession
 
 
 class PlaybackUnavailable(APIException):
@@ -122,4 +125,19 @@ class PlaybackView(PrivateResponseMixin, APIView):
         response = Response({'state': 'ready', 'type': source_type, 'expires_at': expires.isoformat(),
             'content': content.pk, **selection, 'with_credentials': source_type == 'hls'})
         response.data['url'] = grant(response, source, expires, hls=source_type == 'hls')
+        session = None
+        if request.data.get('session_id'):
+            try:
+                session_pk = uuid.UUID(str(request.data['session_id']))
+            except (TypeError, ValueError, AttributeError):
+                raise ValidationError({'session_id': 'Use a valid playback session.'}) from None
+            session = PlaybackSession.objects.filter(pk=session_pk, user=request.user, content=content,
+                episode_id=selection.get('episode'), miniseries_id=selection.get('miniseries'),
+                created_at__gte=django_timezone.now() - timedelta(hours=24)).first()
+            if not session:
+                raise ValidationError({'session_id': 'Playback session is unavailable.'})
+        else:
+            session = PlaybackSession.objects.create(user=request.user, content=content,
+                episode_id=selection.get('episode'), miniseries_id=selection.get('miniseries'))
+        response.data['session_id'] = str(session.pk)
         return response

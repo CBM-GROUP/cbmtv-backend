@@ -207,6 +207,7 @@ INSTALLED_APPS = [
     'content',
     'library',
     'homepage',
+    'discovery',
     'corsheaders',
     'common',
 ]
