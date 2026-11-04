@@ -22,6 +22,8 @@ from common.pagination import StandardPagination
 from common.http import PrivateResponseMixin
 from content.publication import PUBLIC_STATUS, public_eligibility
 from .models import SavedItem, WatchProgress
+from .models import PartProgress
+from django.db import transaction
 from .serializers import (
     RecordProgressSerializer,
     SaveContentSerializer,
@@ -92,6 +94,7 @@ class ProgressListCreateView(PrivateResponseMixin, generics.ListAPIView):
             queryset = queryset.filter(completed=False)
         return queryset
 
+    @transaction.atomic
     def post(self, request):
         serializer = RecordProgressSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -99,6 +102,16 @@ class ProgressListCreateView(PrivateResponseMixin, generics.ListAPIView):
 
         position = data['position_seconds']
         duration = data.get('duration_seconds') or 0
+        # Serialize concurrent writes per viewer/title without changing the
+        # Branch 3 unique snapshot key or overwriting history for other parts.
+        from accounts.models import User
+        User.objects.select_for_update().get(pk=request.user.pk)
+        if data.get('episode') or data.get('miniseries'):
+            PartProgress.objects.update_or_create(user=request.user, content=data['content'],
+                episode=data.get('episode'), miniseries=data.get('miniseries'), defaults={
+                    'position_seconds': position, 'duration_seconds': duration,
+                    'completed': WatchProgress.is_complete(position, duration),
+                })
         progress, _ = WatchProgress.objects.update_or_create(
             user=request.user,
             content=data['content'],
@@ -118,6 +131,22 @@ class ProgressDeleteView(PrivateResponseMixin, APIView):
 
     def get(self, request, content_id):
         from django.shortcuts import get_object_or_404
+        from rest_framework.exceptions import ValidationError
+        selected = {key: request.query_params[key] for key in ('episode', 'miniseries') if key in request.query_params}
+        if selected:
+            if len(selected) != 1 or any(not value.isascii() or not value.isdigit() or len(value) > 18 or int(value) < 1 for value in selected.values()):
+                raise ValidationError('Select one valid episode or part.')
+            filters = dict(user=request.user, content_id=content_id, **selected, **public_eligibility('content__'))
+            progress = PartProgress.objects.select_related('content').filter(**filters).first()
+            snapshot = WatchProgress.objects.select_related('content').filter(**filters).first()
+            if snapshot and (not progress or snapshot.updated_at > progress.updated_at):
+                # A rolled-back older backend may have updated the Branch 3
+                # snapshot without knowing the additive PartProgress table.
+                progress = snapshot
+            if not progress:
+                from django.http import Http404
+                raise Http404
+            return Response(WatchProgressSerializer(progress).data)
         progress = get_object_or_404(
             WatchProgress.objects.select_related('content').prefetch_related('content__genres'),
             user=request.user, content_id=content_id, **public_eligibility('content__'),
@@ -126,4 +155,5 @@ class ProgressDeleteView(PrivateResponseMixin, APIView):
 
     def delete(self, request, content_id):
         WatchProgress.objects.filter(user=request.user, content_id=content_id).delete()
+        PartProgress.objects.filter(user=request.user, content_id=content_id).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

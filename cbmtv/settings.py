@@ -432,3 +432,21 @@ PASSWORD_RESET_CODE_TTL_MINUTES = int(
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+MEDIA_STORAGE.update({
+    'MAX_MULTIPART_BYTES': int(os.environ.get('MEDIA_MAX_MULTIPART_BYTES', str(100 * 1024**3))),
+    'MULTIPART_PART_SIZE': int(os.environ.get('MEDIA_MULTIPART_PART_SIZE', str(8 * 1024**2))),
+    'MULTIPART_PARALLELISM': int(os.environ.get('MEDIA_MULTIPART_PARALLELISM', '4')),
+})
+MEDIA_TRANSCODING_PROVIDER = os.environ.get('MEDIA_TRANSCODING_PROVIDER', 'common.transcoding.FFmpegProvider')
+MEDIA_PROCESSING_TIMEOUT = int(os.environ.get('MEDIA_PROCESSING_TIMEOUT', '14400'))
+PLAYBACK_DELIVERY = {
+    'ENABLED': env_bool('PLAYBACK_PROTECTED_DELIVERY_ENABLED', False),
+    'KEY_PAIR_ID': os.environ.get('CLOUDFRONT_KEY_PAIR_ID', ''),
+    'PRIVATE_KEY_FILE': os.environ.get('CLOUDFRONT_PRIVATE_KEY_FILE', ''),
+    'COOKIE_DOMAIN': os.environ.get('PLAYBACK_COOKIE_DOMAIN', ''),
+    'API_ORIGIN': os.environ.get('PLAYBACK_API_ORIGIN', ''),
+    'TTL': int(os.environ.get('PLAYBACK_AUTH_TTL', '900')),
+    'LEGACY_PREFIXES': [p.strip() for p in os.environ.get('PLAYBACK_PROTECTED_LEGACY_PREFIXES', '').split(',') if p.strip().startswith('/')],
+}
+CORS_ALLOW_CREDENTIALS = True

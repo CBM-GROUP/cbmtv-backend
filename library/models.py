@@ -53,3 +53,23 @@ class WatchProgress(models.Model):
     @classmethod
     def is_complete(cls, position_seconds, duration_seconds):
         return duration_seconds > 0 and position_seconds >= cls.COMPLETION_THRESHOLD * duration_seconds
+
+
+class PartProgress(models.Model):
+    """Additive history; WatchProgress remains the compatible last-viewed snapshot."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    content = models.ForeignKey(Content, on_delete=models.CASCADE)
+    episode = models.ForeignKey(Episode, on_delete=models.CASCADE, null=True)
+    miniseries = models.ForeignKey(MiniSeries, on_delete=models.CASCADE, null=True)
+    position_seconds = models.PositiveIntegerField()
+    duration_seconds = models.PositiveIntegerField(default=0)
+    completed = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=(models.Q(episode__isnull=False, miniseries__isnull=True) |
+                models.Q(episode__isnull=True, miniseries__isnull=False)), name='part_progress_one_selector'),
+            models.UniqueConstraint(fields=['user', 'episode'], condition=models.Q(episode__isnull=False), name='unique_episode_progress'),
+            models.UniqueConstraint(fields=['user', 'miniseries'], condition=models.Q(miniseries__isnull=False), name='unique_miniseries_progress'),
+        ]

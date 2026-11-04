@@ -2,6 +2,33 @@ from django.db import models, transaction
 from django.utils import timezone
 from channel.models import Channel
 from .taxonomy import CATEGORY_CHOICES, FORMAT_CHOICES
+import uuid
+from django.conf import settings
+
+
+class MediaAsset(models.Model):
+    """Durable source/upload and leased transcoding job; never a public URL grant."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    source_key = models.CharField(max_length=512, unique=True)
+    reference_url = models.URLField(max_length=1000, unique=True)
+    content_type = models.CharField(max_length=100)
+    purpose = models.CharField(max_length=16, default='protected')
+    size_bytes = models.PositiveBigIntegerField()
+    part_size = models.PositiveBigIntegerField(default=8388608)
+    upload_id = models.TextField(blank=True)
+    state = models.CharField(max_length=16, default='uploading', choices=[(s, s) for s in (
+        'uploading', 'uploaded', 'queued', 'processing', 'ready', 'failed', 'canceled',
+    )], db_index=True)
+    master_key = models.CharField(max_length=512, blank=True)
+    renditions = models.JSONField(default=list)
+    error = models.CharField(max_length=240, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+    lease_id = models.UUIDField(null=True, editable=False)
+    lease_until = models.DateTimeField(null=True)
+    next_attempt_at = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
 
 class Genre(models.Model):

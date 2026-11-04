@@ -7,6 +7,7 @@ from common.multipart_upload import (
     finish_video_upload,
     sign_part,
     start_video_upload,
+    upload_status,
 )
 from .views import MediaUploadTargetView
 
@@ -22,7 +23,10 @@ class MultipartVideoUploadView(APIView):
                 result = start_video_upload(
                     request.data.get('filename'), request.data.get('content_type'),
                     request.data.get('size_bytes'), request.user.pk,
+                    request.data.get('purpose', 'protected'),
                 )
+            elif action == 'status':
+                result = upload_status(request.data.get('token'), request.user.pk)
             elif action == 'part':
                 result = {'upload_url': sign_part(
                     request.data.get('token'), request.user.pk, request.data.get('part_number')
@@ -35,5 +39,5 @@ class MultipartVideoUploadView(APIView):
             else:
                 return Response({'error': 'Unknown upload action.'}, status=404)
         except MediaStorageError as exc:
-            return Response({'error': str(exc)}, status=400)
+            return Response({'error': str(exc)}, status=getattr(exc, 'status_code', 400))
         return Response(result, status=200)
