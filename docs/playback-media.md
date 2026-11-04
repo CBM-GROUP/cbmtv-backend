@@ -1,8 +1,9 @@
 # Branch 4 playback and media operations
 
-This branch implements protected playback and an asynchronous media path. It
-does not provision AWS resources, start a production worker, commit, push, merge,
-or deploy. Infrastructure changes and the client rollout need review before use.
+This branch implements protected playback and an asynchronous media path. It is
+committed and pushed for review. It does not provision AWS resources, start a
+production worker, merge, or deploy. Infrastructure changes and the client
+rollout need review before use.
 
 ## Repository and release dependencies
 
