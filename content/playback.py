@@ -13,6 +13,7 @@ from rest_framework.exceptions import APIException, ValidationError
 from common.http import PrivateResponseMixin
 from common.media_storage import build_delivery_url
 from .models import Content, Episode, MiniSeries, MediaAsset
+from .legacy_playback import public_legacy_video
 from .publication import public_eligibility
 
 
@@ -96,6 +97,13 @@ class PlaybackView(PrivateResponseMixin, APIView):
         asset = MediaAsset.objects.filter(reference_url=reference).first()
         if asset and (asset.state != 'ready' or asset.purpose != 'protected'):
             return Response({'state': asset.state, 'detail': 'This video is not ready for playback.'}, status=409)
+        if not asset and public_legacy_video(reference):
+            # This exact URL is already public in the existing catalogue. Keep
+            # the mobile contract and allow the website's authenticated player.
+            refresh_at = datetime.now(timezone.utc) + timedelta(days=1)
+            return Response({'state': 'ready', 'type': 'progressive', 'url': reference,
+                             'content': content.pk, **selection, 'with_credentials': False,
+                             'expires_at': refresh_at.isoformat()})
         config = settings.PLAYBACK_DELIVERY
         cdn = settings.MEDIA_STORAGE.get('CLOUDFRONT_BASE_URL') or settings.MEDIA_STORAGE.get('CDN_DOMAIN', '')
         if not cdn or urlsplit(cdn).scheme != 'https':
@@ -113,7 +121,7 @@ class PlaybackView(PrivateResponseMixin, APIView):
             expected, actual = urlsplit(cdn), urlsplit(reference)
             prefixes = config.get('LEGACY_PREFIXES', [])
             if (actual.scheme != 'https' or actual.netloc != expected.netloc or actual.query or actual.fragment
-                    or actual.path.startswith(('/cbmvideo/private/', '/protected/'))
+                    or actual.path.startswith(('/cbmvideo/private/', '/cbmvideo/protected/', '/protected/'))
                     or not any(actual.path.startswith(p) for p in prefixes)
                     or not actual.path.lower().endswith(('.mp4', '.m4v', '.webm', '.mov'))):
                 return Response({'state': 'unavailable', 'detail': 'This legacy video requires protected media migration.'}, status=409)

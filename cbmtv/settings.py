@@ -449,4 +449,9 @@ PLAYBACK_DELIVERY = {
     'TTL': int(os.environ.get('PLAYBACK_AUTH_TTL', '900')),
     'LEGACY_PREFIXES': [p.strip() for p in os.environ.get('PLAYBACK_PROTECTED_LEGACY_PREFIXES', '').split(',') if p.strip().startswith('/')],
 }
+# Existing public videos remain readable by the mobile app until its playback
+# client migrates. Only the observed production CDN is allowed by default.
+PLAYBACK_LEGACY_PUBLIC_ORIGINS = [origin.strip().rstrip('/') for origin in
+    os.environ.get('PLAYBACK_LEGACY_PUBLIC_ORIGINS', 'https://d1urdqn1o8hobe.cloudfront.net').split(',')
+    if origin.strip()]
 CORS_ALLOW_CREDENTIALS = True

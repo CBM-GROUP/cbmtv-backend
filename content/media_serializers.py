@@ -1,6 +1,7 @@
 from django.db import transaction
 from rest_framework import serializers
 from .models import MediaAsset
+from .legacy_playback import public_legacy_video
 from .publication import can_read_dashboard_content
 
 
@@ -62,6 +63,7 @@ class PlaybackMediaMixin(PublicMediaMixin):
         management = request and can_read_dashboard_content(request.user) and (
             request.method not in ('GET', 'HEAD', 'OPTIONS') or request.query_params.get('scope') == 'dashboard')
         data['playback_available'] = bool(instance.streaming_link)
-        if not management:
+        if not management and not (public_legacy_video(instance.streaming_link)
+                                   and not MediaAsset.objects.filter(reference_url=instance.streaming_link).exists()):
             data['streaming_link'] = None
         return data
