@@ -21,6 +21,7 @@ from .publication import PUBLIC_STATUS, public_eligibility, HasDashboardMediaAcc
 from .search_sync import SearchUnavailable, get_search_index, content_document, upsert_content, remove_content
 from .search_reindex import rebuild_search_index as swap_search_index
 from .taxonomy import CATEGORY_CHOICES, FORMAT_CHOICES, CATEGORY_FLAGS
+from discovery.receipts import make_receipt
 
 
 class MediaUploadTargetView(APIView):
@@ -315,6 +316,7 @@ def search_view(request):
         'total': total,
         'offset': offset,
         'next_offset': offset + len(hits) if offset + len(hits) < total else None,
+        'receipt': make_receipt(query, search_by, total, [row.pk for row in rows]),
     })
 
 

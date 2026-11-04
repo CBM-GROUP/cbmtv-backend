@@ -93,6 +93,9 @@ class PlaybackAuthorizationTests(APITestCase):
         self.assertEqual(response.data['url'], self.movie.streaming_link)
         self.assertEqual(response.data['type'], 'progressive')
         self.assertFalse(response.data['with_credentials'])
+        session_id = response.data['session_id']
+        self.assertTrue(session_id)
+        self.assertEqual(self.playback(session_id=session_id).data['session_id'], session_id)
         self.assertEqual(response['Cache-Control'], 'private, no-store')
         self.assertFalse(response.cookies)
 

@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from pathlib import Path
+import uuid
+from django.utils import timezone as django_timezone
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
@@ -15,6 +17,7 @@ from common.media_storage import build_delivery_url
 from .models import Content, Episode, MiniSeries, MediaAsset
 from .legacy_playback import public_legacy_video
 from .publication import public_eligibility
+from discovery.models import PlaybackSession
 
 
 class PlaybackUnavailable(APIException):
@@ -77,6 +80,22 @@ def selected_media(content, episode=None, miniseries=None):
     return content
 
 
+def playback_session(request, content, selection):
+    if request.data.get('session_id'):
+        try:
+            session_pk = uuid.UUID(str(request.data['session_id']))
+        except (TypeError, ValueError, AttributeError):
+            raise ValidationError({'session_id': 'Use a valid playback session.'}) from None
+        session = PlaybackSession.objects.filter(pk=session_pk, user=request.user, content=content,
+            episode_id=selection.get('episode'), miniseries_id=selection.get('miniseries'),
+            created_at__gte=django_timezone.now() - timedelta(hours=24)).first()
+        if not session:
+            raise ValidationError({'session_id': 'Playback session is unavailable.'})
+        return session
+    return PlaybackSession.objects.create(user=request.user, content=content,
+        episode_id=selection.get('episode'), miniseries_id=selection.get('miniseries'))
+
+
 class PlaybackView(PrivateResponseMixin, APIView):
     permission_classes = [IsAuthenticated]
 
@@ -101,9 +120,10 @@ class PlaybackView(PrivateResponseMixin, APIView):
             # This exact URL is already public in the existing catalogue. Keep
             # the mobile contract and allow the website's authenticated player.
             refresh_at = datetime.now(timezone.utc) + timedelta(days=1)
+            session = playback_session(request, content, selection)
             return Response({'state': 'ready', 'type': 'progressive', 'url': reference,
                              'content': content.pk, **selection, 'with_credentials': False,
-                             'expires_at': refresh_at.isoformat()})
+                             'expires_at': refresh_at.isoformat(), 'session_id': str(session.pk)})
         config = settings.PLAYBACK_DELIVERY
         cdn = settings.MEDIA_STORAGE.get('CLOUDFRONT_BASE_URL') or settings.MEDIA_STORAGE.get('CDN_DOMAIN', '')
         if not cdn or urlsplit(cdn).scheme != 'https':
@@ -130,4 +150,6 @@ class PlaybackView(PrivateResponseMixin, APIView):
         response = Response({'state': 'ready', 'type': source_type, 'expires_at': expires.isoformat(),
             'content': content.pk, **selection, 'with_credentials': source_type == 'hls'})
         response.data['url'] = grant(response, source, expires, hls=source_type == 'hls')
+        session = playback_session(request, content, selection)
+        response.data['session_id'] = str(session.pk)
         return response

@@ -97,4 +97,16 @@ jobs:
               exit 1
             }
             curl --fail --silent --show-error http://127.0.0.1:8000/health/ >/dev/null
+            docker compose -f docker-compose.prod.yml up -d --force-recreate --no-deps discovery-worker
+            worker="$(docker compose -f docker-compose.prod.yml ps -q discovery-worker)"
+            [ -n "$worker" ] || { echo "Discovery worker was not created" >&2; exit 1; }
+            [ "$(docker inspect --format '{{.State.Running}}' "$worker")" = "true" ] || {
+              echo "Discovery worker is not running" >&2
+              exit 1
+            }
+            [ "$(docker inspect --format '{{.Image}}' "$worker")" = "$(docker inspect --format '{{.Image}}' "$container")" ] || {
+              echo "Discovery worker image does not match API release" >&2
+              exit 1
+            }
+            docker compose -f docker-compose.prod.yml exec -T discovery-worker python manage.py aggregate_discovery --batch 500 --max-batches 100
             echo "Deployed and healthy: $RELEASE_SHA"
