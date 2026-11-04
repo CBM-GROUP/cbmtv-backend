@@ -80,6 +80,47 @@ class PlaybackAuthorizationTests(APITestCase):
         self.assertEqual(response['Cache-Control'], 'private, no-store')
         self.assertFalse(response.cookies)
 
+    @override_settings(PLAYBACK_LEGACY_PUBLIC_ORIGINS=['https://cdn.example.com'])
+    def test_existing_public_video_keeps_mobile_link_and_website_playback(self):
+        catalogue = self.client.get(f'/api/content/{self.movie.pk}/')
+        self.assertEqual(catalogue.data['streaming_link'], self.movie.streaming_link)
+        self.assertTrue(catalogue.data['playback_available'])
+        self.assertEqual(self.playback().status_code, 401)
+        self.client.force_authenticate(self.viewer)
+        with override_settings(PLAYBACK_DELIVERY={**DELIVERY, 'ENABLED': False}):
+            response = self.playback()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['url'], self.movie.streaming_link)
+        self.assertEqual(response.data['type'], 'progressive')
+        self.assertFalse(response.data['with_credentials'])
+        session_id = response.data['session_id']
+        self.assertTrue(session_id)
+        self.assertEqual(self.playback(session_id=session_id).data['session_id'], session_id)
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        self.assertFalse(response.cookies)
+
+    @override_settings(PLAYBACK_LEGACY_PUBLIC_ORIGINS=['https://cdn.example.com'])
+    def test_protected_upload_never_uses_public_legacy_compatibility(self):
+        self.asset('uploaded')
+        self.assertIsNone(self.client.get(f'/api/content/{self.movie.pk}/').data['streaming_link'])
+        self.client.force_authenticate(self.viewer)
+        response = self.playback()
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn('url', response.data)
+
+    @override_settings(PLAYBACK_LEGACY_PUBLIC_ORIGINS=['https://cdn.example.com'])
+    def test_public_legacy_compatibility_rejects_private_and_other_origins(self):
+        self.client.force_authenticate(self.viewer)
+        for reference in ('https://cdn.example.com/cbmvideo/private/source.mp4',
+                          'https://cdn.example.com/cbmvideo/protected/source.mp4',
+                          'https://evil.example.com/cbmvideo/movie.mp4',
+                          'https://cdn.example.com/cbmvideo/movie.mp4?token=x',
+                          'https://cdn.example.com:444/cbmvideo/movie.mp4'):
+            self.movie.streaming_link = reference
+            self.movie.save(update_fields=['streaming_link'])
+            self.assertIsNone(self.client.get(f'/api/content/{self.movie.pk}/').data['streaming_link'])
+            self.assertEqual(self.playback().status_code, 409, reference)
+
     def test_progressive_fallback_is_signed_and_expires(self):
         self.client.force_authenticate(self.viewer)
         response = self.playback()
