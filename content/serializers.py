@@ -6,6 +6,7 @@ from common.idempotency import OperationConflict
 from .models import Content, Genre, Season, Episode, contentadverts, MiniSeries, HeroSettings
 from .publication import can_read_dashboard_content
 from .publication import PUBLIC_STATUS
+from .media_serializers import PlaybackMediaMixin, PublicMediaMixin
 from .taxonomy import CATEGORY_CHOICES, CATEGORY_FLAGS, legacy_classification, legacy_type_for, genre_categories
 
 
@@ -83,7 +84,7 @@ class GenreSerializer(serializers.ModelSerializer):
             setattr(instance, field, value)
         return self._save_categories(instance, categories)
 
-class ContentSerializer(serializers.ModelSerializer):
+class ContentSerializer(PlaybackMediaMixin, serializers.ModelSerializer):
     genres = serializers.PrimaryKeyRelatedField(many=True, queryset=Genre.objects.all(), required=False)
     cast = serializers.ListField(
         child=serializers.CharField(max_length=200, allow_blank=False, trim_whitespace=True),
@@ -211,7 +212,7 @@ class ContentSerializer(serializers.ModelSerializer):
         fields = '__all__'
         extra_kwargs = {'content_type': {'required': False}}
 
-class SeasonSerializer(serializers.ModelSerializer):
+class SeasonSerializer(PublicMediaMixin, serializers.ModelSerializer):
     class Meta:
         model = Season
         fields = '__all__'
@@ -239,7 +240,7 @@ class SeasonSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         return self._save_unique(instance, validated_data)
 
-class EpisodeSerializer(serializers.ModelSerializer):
+class EpisodeSerializer(PlaybackMediaMixin, serializers.ModelSerializer):
     class Meta:
         model = Episode
         fields = '__all__'
@@ -268,7 +269,7 @@ class EpisodeSerializer(serializers.ModelSerializer):
         return self._save_unique(instance, validated_data)
 
 
-class ContentAdvertSerializer(serializers.ModelSerializer):
+class ContentAdvertSerializer(PublicMediaMixin, serializers.ModelSerializer):
     class Meta:
         model = contentadverts
         fields = '__all__'
@@ -285,7 +286,7 @@ class HeroSettingsSerializer(serializers.ModelSerializer):
         return value
 
 
-class MiniSeriesSerializer(serializers.ModelSerializer):
+class MiniSeriesSerializer(PlaybackMediaMixin, serializers.ModelSerializer):
     class Meta:
         model = MiniSeries
         fields = '__all__'

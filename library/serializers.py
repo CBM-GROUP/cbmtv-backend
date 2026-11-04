@@ -48,8 +48,15 @@ class RecordProgressSerializer(serializers.Serializer):
         episode = attrs.get('episode')
         miniseries = attrs.get('miniseries')
 
+        if episode and miniseries:
+            raise serializers.ValidationError('Select an episode or part, not both.')
+        episodic = content.format == 'series' or content.content_type in ('series', 'miniseries')
+        if episodic and not (episode or miniseries):
+            raise serializers.ValidationError('Episode or part is required for episodic progress.')
         if episode is not None and episode.season.content_id != content.id:
             raise serializers.ValidationError({'episode': ['Episode does not belong to this content.']})
         if miniseries is not None and miniseries.content_id != content.id:
             raise serializers.ValidationError({'miniseries': ['Miniseries part does not belong to this content.']})
+        if not episodic and (episode or miniseries):
+            raise serializers.ValidationError('Standalone progress cannot select an episode or part.')
         return attrs

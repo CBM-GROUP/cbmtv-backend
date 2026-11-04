@@ -6,8 +6,14 @@ from .views import (
     categories_view, GenreListCreateView, GenreDetailView
     )
 from .multipart_views import MultipartVideoUploadView
+from .playback import PlaybackView
+from .media_views import MediaStatusView, MediaRetryView, MediaPreviewView
 
 urlpatterns = [
+    path('<int:pk>/playback/', PlaybackView.as_view(), name='content-playback'),
+    path('media/status/', MediaStatusView.as_view(), name='media-status'),
+    path('media/preview/', MediaPreviewView.as_view(), name='media-preview'),
+    path('media/<uuid:pk>/retry/', MediaRetryView.as_view(), name='media-retry'),
     path('media/upload-target/', MediaUploadTargetView.as_view(), name='media-upload-target'),
     path('media/multipart/<str:action>/', MultipartVideoUploadView.as_view(), name='media-multipart-upload'),
     path('categories/', categories_view, name='content-categories'),
