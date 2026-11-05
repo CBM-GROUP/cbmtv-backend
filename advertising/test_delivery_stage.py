@@ -8,12 +8,13 @@ from rest_framework.test import APITestCase
 from accounts.models import User
 from channel.models import Channel
 from content.models import Content
-from .models import Advertiser, Campaign, Creative, ImageAsset, Placement, Decision, Event
+from .models import Advertiser, Campaign, Creative, ImageAsset, Placement, Decision, Event, AdvertisingSettings
 
 
 @override_settings(ADVERTISING_ENABLED=True)
 class AdvertisingDeliveryStageTests(APITestCase):
     def test_decision_reserves_and_one_impression_consumes_the_cap(self):
+        AdvertisingSettings.objects.create(enabled=True, homepage_enabled=True, video_enabled=True)
         owner = User.objects.create_superuser('stage-owner@example.com', 'Owner', password='test')
         advertiser = Advertiser.objects.create(name='Stage sponsor')
         campaign = Campaign.objects.create(name='Stage campaign', advertiser=advertiser,

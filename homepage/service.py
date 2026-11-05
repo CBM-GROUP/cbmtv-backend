@@ -14,6 +14,7 @@ from library.serializers import WatchProgressSerializer
 from .defaults import SECTION_LABELS, default_sections
 from .models import FeaturedChannel, FeaturedTitle, HomepageConfiguration
 from advertising.constants import HOMEPAGE_PLACEMENTS
+from advertising.activation import advertising_active
 from django.conf import settings
 
 
@@ -50,7 +51,7 @@ def build_homepage(config, user=None, now=None):
         sections.append(row)
         if key in HOMEPAGE_PLACEMENTS:
             row['source'] = 'advertising'
-            row['enabled'] = section['enabled'] and settings.ADVERTISING_ENABLED
+            row['enabled'] = section['enabled'] and advertising_active(key)
             continue
         if not section['enabled']:
             continue

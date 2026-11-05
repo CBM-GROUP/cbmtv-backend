@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (AdvertiserViewSet, CampaignViewSet, CreativeViewSet,
                     ImageUploadView, PlacementViewSet, TargetOptionsView,
-                    SessionView, DecisionView, EventView, ReportView)
+                    SessionView, DecisionView, EventView, ReportView, AdvertisingSettingsView)
 
 router = DefaultRouter()
 router.register('advertisers', AdvertiserViewSet)
@@ -16,6 +16,7 @@ urlpatterns = [
     path('decision/', DecisionView.as_view()),
     path('events/', EventView.as_view()),
     path('reports/', ReportView.as_view()),
+    path('settings/', AdvertisingSettingsView.as_view()),
     path('targets/', TargetOptionsView.as_view()),
     path('images/', ImageUploadView.as_view()),
     path('', include(router.urls)),

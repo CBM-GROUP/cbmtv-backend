@@ -22,7 +22,7 @@ from content.test_media_uploads import TEST_STORAGE
 from discovery.models import PlaybackSession, DiscoveryEvent
 from homepage.models import HomepageConfiguration
 from homepage.defaults import default_sections
-from .models import Advertiser, Campaign, Creative, ImageAsset, Placement, Decision, Event, CampaignDay, AdRequest, Audit
+from .models import Advertiser, Campaign, Creative, ImageAsset, Placement, Decision, Event, CampaignDay, AdRequest, Audit, AdvertisingSettings
 from .delivery import context_session, decide, ingest
 from .serializers import safe_destination, targeting_rules
 
@@ -30,6 +30,7 @@ BASE = '/api/advertising/'
 
 
 def fixtures(user):
+    AdvertisingSettings.objects.update_or_create(pk=1, defaults={'enabled': True, 'homepage_enabled': True, 'video_enabled': True})
     advertiser = Advertiser.objects.create(name='Fixture sponsor', email='private@example.com', billing_reference='PRIVATE')
     campaign = Campaign.objects.create(name='Fixture campaign', advertiser=advertiser,
         starts_at=timezone.now() - timedelta(days=1), ends_at=timezone.now() + timedelta(days=2),
@@ -43,6 +44,42 @@ def fixtures(user):
     channel = Channel.objects.create(name='Advertising channel')
     content = Content.objects.create(title='Published fixture', content_type='movie', status='approved', channel=channel, category='movies')
     return advertiser, campaign, creative, content
+
+
+@override_settings(ADVERTISING_ENABLED=True)
+class AdvertisingActivationTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser('activation-admin@example.com', 'Admin', password='test')
+        self.viewer = User.objects.create_user('activation-viewer@example.com', 'Viewer', password='test')
+
+    def test_defaults_permissions_audit_and_environment_override(self):
+        self.client.force_authenticate(self.admin)
+        initial = self.client.get(BASE + 'settings/')
+        self.assertEqual(initial.status_code, 200)
+        self.assertFalse(initial.data['enabled'])
+        self.assertFalse(initial.data['effective_enabled'])
+        self.assertEqual(self.client.post(BASE + 'session/', {'context': 'homepage'}, format='json').data['placements'], [])
+        self.assertEqual(self.client.patch(BASE + 'settings/', {'enabled': 'true'}, format='json').status_code, 400)
+        self.client.force_authenticate(self.viewer)
+        self.assertEqual(self.client.patch(BASE + 'settings/', {'enabled': True}, format='json').status_code, 403)
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(BASE + 'settings/', {'enabled': True, 'homepage_enabled': True, 'video_enabled': True}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data['effective_video_enabled'])
+        self.assertEqual(Audit.objects.filter(resource='advertisingsettings', action='enabled').count(), 3)
+        with override_settings(ADVERTISING_ENABLED=False):
+            self.assertFalse(self.client.get(BASE + 'settings/').data['effective_enabled'])
+            self.assertFalse(self.client.post(BASE + 'session/', {'context': 'homepage'}, format='json').data['enabled'])
+
+    def test_scope_controls_public_session_and_playback(self):
+        self.client.force_authenticate(self.admin)
+        self.client.patch(BASE + 'settings/', {'enabled': True, 'homepage_enabled': False, 'video_enabled': False}, format='json')
+        _, _, _, content = fixtures(self.admin)
+        AdvertisingSettings.objects.filter(pk=1).update(homepage_enabled=False, video_enabled=False)
+        homepage = self.client.post(BASE + 'session/', {'context': 'homepage'}, format='json')
+        self.assertEqual(homepage.status_code, 200)
+        self.assertNotIn('homepage_banner', [row['code'] for row in homepage.data['placements']])
+        self.assertFalse(self.client.get(BASE + 'settings/').data['effective_video_enabled'])
 
 
 @override_settings(ADVERTISING_ENABLED=True)

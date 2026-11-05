@@ -3,6 +3,7 @@ import uuid
 from datetime import timedelta
 from urllib.parse import urlsplit
 from django.conf import settings
+from .activation import advertising_active
 from django.core import signing
 from django.db import transaction, connection
 from django.db.models import Q, F
@@ -137,7 +138,7 @@ def promoted_eligible(creative):
 
 def payload(decision, response, region=''):
     now = timezone.now()
-    if (not settings.ADVERTISING_ENABLED or not decision.creative_id or decision.expires_at <= now
+    if (not advertising_active(decision.placement_id) or not decision.creative_id or decision.expires_at <= now
             or decision.terminal_at or not decision.placement.enabled or not active(decision.campaign, now)
             or decision.creative.approval != 'approved' or not promoted_eligible(decision.creative)
             or decision.placement_id not in decision.campaign.placements or decision.placement_id not in decision.creative.placements
@@ -189,7 +190,7 @@ def decide(session, placement, break_key, request_id, response, region=''):
     choice = None
     campaign_choice = None
     reason = 'no_eligible_campaign'
-    if not settings.ADVERTISING_ENABLED:
+    if not advertising_active(placement.code):
         reason = 'disabled'
     elif not placement.enabled or not placement_allowed(session, placement, break_key):
         reason = 'placement_disabled'
@@ -266,7 +267,7 @@ def ingest(session, decision_id, kind, position):
     if Event.objects.filter(decision=decision, kind=kind).exists():
         return {'accepted': True, 'duplicate': True}
     now = timezone.now()
-    if not settings.ADVERTISING_ENABLED or decision.expires_at <= now or decision.terminal_at:
+    if not advertising_active(decision.placement_id) or decision.expires_at <= now or decision.terminal_at:
         raise ValidationError('Decision is expired, stopped or already finished.')
     video = decision.creative.kind == 'video'
     elapsed = (now - decision.started_at).total_seconds() if decision.started_at else 0
