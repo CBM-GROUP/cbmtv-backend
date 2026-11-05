@@ -122,7 +122,7 @@ class FFmpegProvider:
             input_options = ['-protocol_whitelist', 'file,pipe,crypto', '-format_whitelist', 'mov,matroska,webm']
             probe_data = self._run([
                 getattr(settings, 'MEDIA_FFPROBE_BIN', 'ffprobe'), '-v', 'error',
-                *input_options, '-show_streams', '-of', 'json', str(source),
+                *input_options, '-show_streams', '-show_format', '-of', 'json', str(source),
             ], deadline)
             try:
                 streams = json.loads(probe_data)['streams']
@@ -138,6 +138,13 @@ class FFmpegProvider:
                 raise TranscodingError('Source does not contain a supported video stream.') from exc
             audio = any(stream.get('codec_type') == 'audio' for stream in streams)
             renditions = rendition_ladder(width, height, video.get('sample_aspect_ratio', '1:1'), rotation)
+            try:
+                duration = float(json.loads(probe_data).get('format', {}).get('duration') or video.get('duration', 0))
+                if math.isfinite(duration) and duration > 0:
+                    for rendition in renditions:
+                        rendition['duration_seconds'] = duration
+            except (TypeError, ValueError):
+                pass
             master = ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-INDEPENDENT-SEGMENTS']
             for rendition in renditions:
                 label = f"{rendition['height']}p"

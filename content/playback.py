@@ -99,6 +99,11 @@ def playback_session(request, content, selection):
 class PlaybackView(PrivateResponseMixin, APIView):
     permission_classes = [IsAuthenticated]
 
+    def finalize_response(self, request, response, *args, **kwargs):
+        if isinstance(getattr(response, 'data', None), dict) and response.data.get('state') == 'ready':
+            response.data['advertising_enabled'] = settings.ADVERTISING_ENABLED
+        return super().finalize_response(request, response, *args, **kwargs)
+
     def post(self, request, pk):
         content = get_object_or_404(Content, pk=pk, **public_eligibility())
         selection = {}

@@ -189,3 +189,54 @@ class TargetOptionsView(PrivateResponseMixin, APIView):
             'genres': list(Genre.objects.filter(is_active=True, name__icontains=query).order_by('name').values('id', 'name')[:100]),
             'channels': list(Channel.objects.filter(is_active=True, name__icontains=query).order_by('name').values('id', 'name')[:100]),
             'contents': [{'id': row.pk, 'name': row.title} for row in Content.objects.filter(title__icontains=query, **public_eligibility()).order_by('title')[:100]]})
+
+class PublicAdView(PrivateResponseMixin, APIView):
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [AdAnonThrottle, AdUserThrottle]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if request.method == 'POST' and not isinstance(request.data, dict):
+            raise ValidationError('Provide a JSON object.')
+
+
+class SessionView(PublicAdView):
+    def post(self, request):
+        if not settings.ADVERTISING_ENABLED:
+            return Response({'enabled': False, 'session': None, 'placements': []})
+        session = context_session(request.data, request.user)
+        placements = Placement.objects.filter(enabled=True)
+        rows = [{'code': p.code, 'breakpoints': p.breakpoints} for p in placements
+                if placement_allowed(session, p, str(p.breakpoints[0]) if p.code == 'midroll' and p.breakpoints else 'once')]
+        return Response({'enabled': True, 'session': receipt(session), 'placements': rows})
+
+
+class DecisionView(PublicAdView):
+    def post(self, request):
+        if not settings.ADVERTISING_ENABLED:
+            return Response({'ad': None, 'reason': 'disabled'})
+        session = authorized_session(request.data.get('session'), request.user)
+        code = request.data.get('placement')
+        if not isinstance(code, str) or code not in PLACEMENTS:
+            raise ValidationError('Select a supported placement.')
+        placement = get_object_or_404(Placement, pk=code)
+        key = request.data.get('break_key', 'once')
+        if not isinstance(key, str) or len(key) > 32 or not placement_allowed(session, placement, key):
+            raise ValidationError('Placement or breakpoint does not belong to this context.')
+        # Geography is honored only behind explicitly trusted ingress. Never
+        # accept a region supplied in the request JSON or an arbitrary header.
+        region = ''
+        if request.META.get('REMOTE_ADDR') in settings.ADVERTISING_GEO_TRUSTED_PROXIES:
+            region = request.META.get('HTTP_X_CBM_COUNTRY', '')
+        response = Response()
+        response.data = decide(session, placement, key, identifier(request.data.get('request_id')), response, region)
+        return response
+
+
+class EventView(PublicAdView):
+    def post(self, request):
+        session = authorized_session(request.data.get('session'), request.user)
+        return Response(ingest(session, identifier(request.data.get('decision_id')), request.data.get('kind'),
+                               request.data.get('position_seconds', 0)))
+
+
