@@ -13,6 +13,8 @@ from library.models import WatchProgress
 from library.serializers import WatchProgressSerializer
 from .defaults import SECTION_LABELS, default_sections
 from .models import FeaturedChannel, FeaturedTitle, HomepageConfiguration
+from advertising.constants import HOMEPAGE_PLACEMENTS
+from django.conf import settings
 
 
 def configuration():
@@ -44,8 +46,12 @@ def build_homepage(config, user=None, now=None):
         source = 'editorial' if key in ('featured_hero', 'featured_channels') else (
             'personalized' if key == 'continue_watching' else 'automatic'
         )
-        row = {**section, 'label': SECTION_LABELS[key], 'source': source, 'items': []}
+        row = {**section, 'label': {**SECTION_LABELS, **HOMEPAGE_PLACEMENTS}[key], 'source': source, 'items': []}
         sections.append(row)
+        if key in HOMEPAGE_PLACEMENTS:
+            row['source'] = 'advertising'
+            row['enabled'] = section['enabled'] and settings.ADVERTISING_ENABLED
+            continue
         if not section['enabled']:
             continue
         if key == 'featured_hero':
