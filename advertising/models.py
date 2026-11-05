@@ -30,6 +30,15 @@ class Placement(Timestamped):
     failure_policy = models.CharField(max_length=16, default='continue', choices=[('continue', 'Continue content')])
 
 
+class AdvertisingSettings(models.Model):
+    """Administrator activation; the environment kill switch still takes precedence."""
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    enabled = models.BooleanField(default=False)
+    homepage_enabled = models.BooleanField(default=False)
+    video_enabled = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
 class Campaign(Timestamped):
     name = models.CharField(max_length=200)
     advertiser = models.ForeignKey(Advertiser, on_delete=models.PROTECT, related_name='campaigns')

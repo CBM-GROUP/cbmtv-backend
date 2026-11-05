@@ -7,6 +7,7 @@ from pathlib import Path
 import uuid
 from django.utils import timezone as django_timezone
 from django.conf import settings
+from advertising.activation import advertising_active
 from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -101,7 +102,7 @@ class PlaybackView(PrivateResponseMixin, APIView):
 
     def finalize_response(self, request, response, *args, **kwargs):
         if isinstance(getattr(response, 'data', None), dict) and response.data.get('state') == 'ready':
-            response.data['advertising_enabled'] = settings.ADVERTISING_ENABLED
+            response.data['advertising_enabled'] = advertising_active('preroll')
         return super().finalize_response(request, response, *args, **kwargs)
 
     def post(self, request, pk):

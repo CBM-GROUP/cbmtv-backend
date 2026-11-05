@@ -9,7 +9,7 @@ from rest_framework.exceptions import ValidationError, PermissionDenied
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
-from accounts.permissions import HasDashboardSection, dashboard_permissions
+from accounts.permissions import HasDashboardSection, IsDashboardSuperuser, dashboard_permissions
 from accounts.throttles import TrustedProxyRateThrottle
 from common.http import PrivateResponseMixin
 from common.pagination import StandardPagination
@@ -19,11 +19,13 @@ from content.models import Content, Genre
 from content.publication import public_eligibility
 from content.taxonomy import CATEGORY_CHOICES
 from channel.models import Channel
-from .models import Advertiser, Campaign, Creative, Placement, Audit, Decision
+from .models import Advertiser, Campaign, Creative, Placement, Audit, Decision, AdvertisingSettings
+from .activation import activation_state, advertising_active
 from .serializers import AdvertiserSerializer, CampaignSerializer, CreativeSerializer, PlacementSerializer, creative_ready, media_duration
 from .media import upload_image, StorageUnavailable
 from .constants import PLACEMENTS
 from .delivery import context_session, receipt, authorized_session, decide, ingest, identifier, placement_allowed
+from .reports import report
 
 
 class AdAnonThrottle(AnonRateThrottle):
@@ -204,10 +206,10 @@ class PublicAdView(PrivateResponseMixin, APIView):
 
 class SessionView(PublicAdView):
     def post(self, request):
-        if not settings.ADVERTISING_ENABLED:
+        if not advertising_active():
             return Response({'enabled': False, 'session': None, 'placements': []})
         session = context_session(request.data, request.user)
-        placements = Placement.objects.filter(enabled=True)
+        placements = (p for p in Placement.objects.filter(enabled=True) if advertising_active(p.code))
         rows = [{'code': p.code, 'breakpoints': p.breakpoints} for p in placements
                 if placement_allowed(session, p, str(p.breakpoints[0]) if p.code == 'midroll' and p.breakpoints else 'once')]
         return Response({'enabled': True, 'session': receipt(session), 'placements': rows})
@@ -215,13 +217,15 @@ class SessionView(PublicAdView):
 
 class DecisionView(PublicAdView):
     def post(self, request):
-        if not settings.ADVERTISING_ENABLED:
+        if not advertising_active():
             return Response({'ad': None, 'reason': 'disabled'})
         session = authorized_session(request.data.get('session'), request.user)
         code = request.data.get('placement')
         if not isinstance(code, str) or code not in PLACEMENTS:
             raise ValidationError('Select a supported placement.')
         placement = get_object_or_404(Placement, pk=code)
+        if not advertising_active(code):
+            return Response({'ad': None, 'reason': 'disabled'})
         key = request.data.get('break_key', 'once')
         if not isinstance(key, str) or len(key) > 32 or not placement_allowed(session, placement, key):
             raise ValidationError('Placement or breakpoint does not belong to this context.')
@@ -240,5 +244,46 @@ class EventView(PublicAdView):
         session = authorized_session(request.data.get('session'), request.user)
         return Response(ingest(session, identifier(request.data.get('decision_id')), request.data.get('kind'),
                                request.data.get('position_seconds', 0)))
+
+
+
+class ReportView(PrivateResponseMixin, APIView):
+    permission_classes = [HasDashboardSection]
+    required_section = 'adverts'
+
+    def get(self, request):
+        return Response({'enabled': advertising_active(), **report(request.query_params)})
+
+
+class AdvertisingSettingsView(PrivateResponseMixin, APIView):
+    permission_classes = [HasDashboardSection]
+    required_section = 'adverts'
+
+    def get(self, request):
+        state = activation_state()
+        return Response({**state, 'effective_enabled': advertising_active(),
+            'effective_homepage_enabled': advertising_active('homepage_banner'),
+            'effective_video_enabled': advertising_active('preroll')})
+
+    def patch(self, request):
+        if not IsDashboardSuperuser().has_permission(request, self):
+            raise PermissionDenied('Only a dashboard superuser can change advertising activation.')
+        fields = ('enabled', 'homepage_enabled', 'video_enabled')
+        if not isinstance(request.data, dict) or not request.data or set(request.data) - set(fields):
+            raise ValidationError('Provide supported activation fields.')
+        for key, value in request.data.items():
+            if type(value) is not bool:
+                raise ValidationError({key: 'Use a boolean.'})
+        with transaction.atomic():
+            row, _ = AdvertisingSettings.objects.select_for_update().get_or_create(pk=1)
+            changed = [key for key, value in request.data.items() if getattr(row, key) != value]
+            for key in changed:
+                setattr(row, key, request.data[key])
+            if changed:
+                row.save(update_fields=[*changed, 'updated_at'])
+                for key in changed:
+                    Audit.objects.create(actor=request.user, resource='advertisingsettings', resource_id=key,
+                        action='enabled' if request.data[key] else 'disabled')
+        return self.get(request)
 
 
