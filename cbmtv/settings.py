@@ -208,11 +208,15 @@ INSTALLED_APPS = [
     'library',
     'homepage',
     'discovery',
+    'advertising',
     'corsheaders',
     'common',
 ]
 
 CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", False)
+# An explicit operational gate. Never infer activation from DEBUG or campaigns.
+ADVERTISING_ENABLED = env_bool('ADVERTISING_ENABLED', False)
+ADVERTISING_GEO_TRUSTED_PROXIES = [v.strip() for v in os.environ.get('ADVERTISING_GEO_TRUSTED_PROXIES', '').split(',') if v.strip()]
 CORS_ALLOW_CREDENTIALS = True
 from corsheaders.defaults import default_headers
 CORS_ALLOW_HEADERS = (*default_headers, 'idempotency-key', 'if-publication-status')
