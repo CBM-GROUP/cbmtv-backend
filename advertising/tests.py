@@ -70,6 +70,9 @@ class AdvertisingActivationTests(APITestCase):
         with override_settings(ADVERTISING_ENABLED=False):
             self.assertFalse(self.client.get(BASE + 'settings/').data['effective_enabled'])
             self.assertFalse(self.client.post(BASE + 'session/', {'context': 'homepage'}, format='json').data['enabled'])
+            with patch('advertising.activation.AdvertisingSettings.objects.filter', side_effect=AssertionError('settings table queried')):
+                from .activation import advertising_active
+                self.assertFalse(advertising_active('preroll'))
 
     def test_scope_controls_public_session_and_playback(self):
         self.client.force_authenticate(self.admin)

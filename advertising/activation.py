@@ -15,6 +15,10 @@ def activation_state():
 
 
 def advertising_active(placement=None):
+    # The deployment kill switch must keep legacy reads independent of this
+    # new table while migrations and application instances roll forward.
+    if not settings.ADVERTISING_ENABLED:
+        return False
     state = activation_state()
     if not (state['environment_enabled'] and state['enabled']):
         return False
