@@ -22,6 +22,9 @@ from channel.models import Channel
 from .models import Advertiser, Campaign, Creative, Placement, Audit, Decision
 from .serializers import AdvertiserSerializer, CampaignSerializer, CreativeSerializer, PlacementSerializer, creative_ready, media_duration
 from .media import upload_image, StorageUnavailable
+from .constants import PLACEMENTS
+from .delivery import context_session, receipt, authorized_session, decide, ingest, identifier, placement_allowed
+from .reports import report
 
 
 class AdAnonThrottle(AnonRateThrottle):
@@ -238,5 +241,14 @@ class EventView(PublicAdView):
         session = authorized_session(request.data.get('session'), request.user)
         return Response(ingest(session, identifier(request.data.get('decision_id')), request.data.get('kind'),
                                request.data.get('position_seconds', 0)))
+
+
+
+class ReportView(PrivateResponseMixin, APIView):
+    permission_classes = [HasDashboardSection]
+    required_section = 'adverts'
+
+    def get(self, request):
+        return Response({'enabled': settings.ADVERTISING_ENABLED, **report(request.query_params)})
 
 
