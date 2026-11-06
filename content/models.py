@@ -168,7 +168,11 @@ class contentadverts(models.Model):
 
 
 class HeroSettings(models.Model):
-    image_duration_seconds = models.PositiveSmallIntegerField(default=20)
+    image_duration_seconds = models.PositiveSmallIntegerField(default=5)
+    display_mode = models.CharField(max_length=20, default='thumbnail_trailer', choices=[
+        ('thumbnails_only', 'Thumbnails only'), ('thumbnail_trailer', 'Thumbnail + trailer'),
+    ])
+    trailer_preview_seconds = models.PositiveSmallIntegerField(default=20)
 
 
 class MiniSeries(models.Model):

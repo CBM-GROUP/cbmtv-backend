@@ -10,7 +10,9 @@ class HeroSettingsTests(APITestCase):
     def test_public_defaults_and_admin_update(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data['image_duration_seconds'], 20)
+        self.assertEqual(response.data['image_duration_seconds'], 5)
+        self.assertEqual(response.data['display_mode'], 'thumbnail_trailer')
+        self.assertEqual(response.data['trailer_preview_seconds'], 20)
 
         viewer = User.objects.create_user(email='viewer@example.com', name='Viewer', password='pass1234')
         self.client.force_authenticate(user=viewer)
@@ -22,13 +24,17 @@ class HeroSettingsTests(APITestCase):
         admin.save(update_fields=['is_staff'])
         self.client.force_authenticate(user=admin)
 
-        response = self.client.patch(self.url, {'image_duration_seconds': 25}, format='json')
+        response = self.client.patch(self.url, {'image_duration_seconds': 25, 'display_mode': 'thumbnails_only', 'trailer_preview_seconds': 30}, format='json')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['image_duration_seconds'], 25)
+        self.assertEqual(response.data['display_mode'], 'thumbnails_only')
+        self.assertEqual(response.data['trailer_preview_seconds'], 30)
 
         response = self.client.patch(self.url, {'image_duration_seconds': 0}, format='json')
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.client.get(self.url).data['image_duration_seconds'], 25)
+        self.assertEqual(self.client.patch(self.url, {'trailer_preview_seconds': 0}, format='json').status_code, 400)
+        self.assertEqual(self.client.patch(self.url, {'display_mode': 'invalid'}, format='json').status_code, 400)
 
     def test_existing_adverts_remain_in_hero_by_default(self):
         advert = contentadverts.objects.create(advert_type='hello', advert_name='Featured')
