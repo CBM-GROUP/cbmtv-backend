@@ -104,15 +104,22 @@ class HomepageTests(TestCase):
         Content.objects.create(title='Channel title', content_type='movie', channel=second, status='approved')
         data = self.payload(); data['featured_channels'] = []
         self.assertEqual(self.save(data).status_code, 200)
-        self.assertEqual([row['id'] for row in self.section('featured_channels')['items']], [second.pk, self.channel.pk])
+        def visible_ids():
+            return [row['id'] for row in self.section('featured_channels')['items']]
+        def active_ids():
+            return list(Channel.objects.filter(is_active=True).order_by('name', 'pk').values_list('pk', flat=True))
+        self.assertEqual(self.section('featured_channels')['label'], 'Channels')
+        self.assertEqual(visible_ids(), active_ids())
+        self.assertIn(empty.pk, visible_ids())
         new_title = Content.objects.create(title='New channel title', content_type='movie', channel=empty, status='approved')
-        self.assertEqual([row['id'] for row in self.section('featured_channels')['items']], [second.pk, self.channel.pk, empty.pk])
+        self.assertEqual(visible_ids(), active_ids())
         new_title.status = 'preview'; new_title.save(update_fields=['status'])
-        self.assertEqual([row['id'] for row in self.section('featured_channels')['items']], [second.pk, self.channel.pk])
+        self.assertEqual(visible_ids(), active_ids())
         second.is_active = False; second.save()
-        self.assertEqual([row['id'] for row in self.section('featured_channels')['items']], [self.channel.pk])
+        self.assertEqual(visible_ids(), active_ids())
+        self.assertNotIn(second.pk, visible_ids())
         second.delete()
-        self.assertEqual(len(self.section('featured_channels')['items']), 1)
+        self.assertEqual(visible_ids(), active_ids())
 
     def test_layout_order_optional_visibility_and_required_sections(self):
         data = self.payload()

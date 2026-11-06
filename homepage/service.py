@@ -1,12 +1,12 @@
 """Effective homepage data. Preview and public reads share eligibility rules."""
 from calendar import monthrange
 from datetime import timedelta
-from django.db.models import Exists, OuterRef, Q, Subquery
+from django.db.models import OuterRef, Q, Subquery
 from django.utils import timezone
 from channel.models import Channel
 from channel.serializers import ChannelSerializer
 from content.models import Content, Episode, MiniSeries
-from content.publication import PUBLIC_STATUS, public_eligibility
+from content.publication import public_eligibility
 from content.serializers import ContentSerializer
 from content.taxonomy import CATEGORY_FLAGS
 from library.models import WatchProgress
@@ -68,9 +68,7 @@ def build_homepage(config, user=None, now=None):
                 titles = list(public.filter(is_featured=True).order_by('-id')[:6])
             row['items'] = ContentSerializer(titles, many=True).data
         elif key == 'featured_channels':
-            channels = Channel.objects.filter(is_active=True).filter(
-                Exists(Content.objects.filter(channel=OuterRef('pk'), status=PUBLIC_STATUS)),
-            ).order_by('name', 'pk')
+            channels = Channel.objects.filter(is_active=True).order_by('name', 'pk')
             row['items'] = ChannelSerializer(channels, many=True).data
         elif key == 'continue_watching':
             if user and user.is_authenticated:
