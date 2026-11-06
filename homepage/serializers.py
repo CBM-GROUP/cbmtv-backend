@@ -7,10 +7,11 @@ from content.models import Content
 from content.publication import PUBLIC_STATUS, public_eligibility
 from content.serializers import ContentSerializer
 from .defaults import REQUIRED_SECTIONS, SECTION_LABELS
+from advertising.constants import HOMEPAGE_PLACEMENTS
 
 
 class SectionSerializer(serializers.Serializer):
-    id = serializers.ChoiceField(choices=list(SECTION_LABELS))
+    id = serializers.ChoiceField(choices=list(SECTION_LABELS) + list(HOMEPAGE_PLACEMENTS))
     enabled = serializers.BooleanField()
 
 
@@ -57,12 +58,17 @@ class ConfigurationSerializer(serializers.Serializer):
 
     def validate_sections(self, value):
         ids = [row['id'] for row in value]
-        if len(ids) != len(SECTION_LABELS) or set(ids) != set(SECTION_LABELS):
+        if len(ids) != len(set(ids)) or not set(SECTION_LABELS).issubset(ids):
             raise serializers.ValidationError('Include every section exactly once.')
         if ids[0] != 'featured_hero':
             raise serializers.ValidationError('Featured Hero must stay first.')
         if any(not row['enabled'] for row in value if row['id'] in REQUIRED_SECTIONS):
             raise serializers.ValidationError('Featured Hero and Continue Watching are required.')
+        enabled_ads = [row for row in value if row['id'] in HOMEPAGE_PLACEMENTS and row['enabled']]
+        if len(enabled_ads) > 2:
+            raise serializers.ValidationError('Enable at most two homepage advertising sections.')
+        if any(row['id'] in HOMEPAGE_PLACEMENTS and row['enabled'] for row in value[:3]):
+            raise serializers.ValidationError('Keep the first three homepage sections for browsing.')
         return value
 
     def validate_featured_titles(self, value):

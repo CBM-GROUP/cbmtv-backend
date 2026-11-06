@@ -31,6 +31,7 @@ urlpatterns = [
     path('api/library/', include('library.urls')),
     path('api/homepage/', include('homepage.urls')),
     path('api/discovery/', include('discovery.urls')),
+    path('api/advertising/', include('advertising.urls')),
     path('api/dashboard/analytics/', DashboardAnalyticsView.as_view(), name='dashboard-analytics'),
     
     # Swagger UI
