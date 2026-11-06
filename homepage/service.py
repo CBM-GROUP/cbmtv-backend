@@ -41,7 +41,7 @@ def build_homepage(config, user=None, now=None):
     sections = []
     for section in config['sections'] or default_sections():
         key = section['id']
-        source = 'editorial' if key in ('featured_hero', 'featured_channels') else (
+        source = 'editorial' if key == 'featured_hero' else (
             'personalized' if key == 'continue_watching' else 'automatic'
         )
         row = {**section, 'label': SECTION_LABELS[key], 'source': source, 'items': []}
@@ -62,12 +62,10 @@ def build_homepage(config, user=None, now=None):
                 titles = list(public.filter(is_featured=True).order_by('-id')[:6])
             row['items'] = ContentSerializer(titles, many=True).data
         elif key == 'featured_channels':
-            ids = [p['channel'].pk if isinstance(p, dict) else p.channel_id for p in config['featured_channels']]
-            channels = Channel.objects.filter(pk__in=ids, is_active=True).filter(
+            channels = Channel.objects.filter(is_active=True).filter(
                 Exists(Content.objects.filter(channel=OuterRef('pk'), status=PUBLIC_STATUS)),
-            )
-            eligible = {channel.pk: channel for channel in channels}
-            row['items'] = ChannelSerializer([eligible[pk] for pk in ids if pk in eligible], many=True).data
+            ).order_by('name', 'pk')
+            row['items'] = ChannelSerializer(channels, many=True).data
         elif key == 'continue_watching':
             if user and user.is_authenticated:
                 next_episode = Episode.objects.filter(

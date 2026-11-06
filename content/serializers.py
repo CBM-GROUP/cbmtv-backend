@@ -278,11 +278,16 @@ class ContentAdvertSerializer(PublicMediaMixin, serializers.ModelSerializer):
 class HeroSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = HeroSettings
-        fields = ('image_duration_seconds',)
+        fields = ('image_duration_seconds', 'display_mode', 'trailer_preview_seconds')
 
     def validate_image_duration_seconds(self, value):
         if not 5 <= value <= 120:
             raise serializers.ValidationError('Choose a duration between 5 and 120 seconds.')
+        return value
+
+    def validate_trailer_preview_seconds(self, value):
+        if not 1 <= value <= 120:
+            raise serializers.ValidationError('Choose a preview duration between 1 and 120 seconds.')
         return value
 
 
