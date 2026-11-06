@@ -1,6 +1,6 @@
 SECTION_LABELS = {
     'featured_hero': 'Featured Hero',
-    'featured_channels': 'Featured Channels',
+    'featured_channels': 'Channels',
     'continue_watching': 'Continue Watching',
     'new_releases': 'New Releases',
     'tv_shows': 'TV Shows',
