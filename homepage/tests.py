@@ -99,15 +99,18 @@ class HomepageTests(TestCase):
             self.assertEqual(list(FeaturedTitle.objects.values_list('content_id', flat=True)), [self.b.pk, self.a.pk])
 
     def test_channel_order_inactive_empty_and_deleted(self):
-        second = Channel.objects.create(name='Second channel')
+        second = Channel.objects.create(name='A second channel')
         empty = Channel.objects.create(name='No public titles')
         Content.objects.create(title='Channel title', content_type='movie', channel=second, status='approved')
-        data = self.payload(); data['featured_channels'] = [{'channel': second.pk}, {'channel': empty.pk}, {'channel': self.channel.pk}]
+        data = self.payload(); data['featured_channels'] = []
         self.assertEqual(self.save(data).status_code, 200)
+        self.assertEqual([row['id'] for row in self.section('featured_channels')['items']], [second.pk, self.channel.pk])
+        new_title = Content.objects.create(title='New channel title', content_type='movie', channel=empty, status='approved')
+        self.assertEqual([row['id'] for row in self.section('featured_channels')['items']], [second.pk, self.channel.pk, empty.pk])
+        new_title.status = 'preview'; new_title.save(update_fields=['status'])
         self.assertEqual([row['id'] for row in self.section('featured_channels')['items']], [second.pk, self.channel.pk])
         second.is_active = False; second.save()
         self.assertEqual([row['id'] for row in self.section('featured_channels')['items']], [self.channel.pk])
-        self.assertEqual(self.save(data).status_code, 400)
         second.delete()
         self.assertEqual(len(self.section('featured_channels')['items']), 1)
 
