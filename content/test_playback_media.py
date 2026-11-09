@@ -154,6 +154,17 @@ class PlaybackAuthorizationTests(APITestCase):
             self.assertEqual(cookie['domain'], 'example.com')
             self.assertEqual(cookie['path'], f'/protected/hls/{asset.pk}/attempt/')
 
+    def test_native_hls_grant_returns_exact_scoped_cookie_header(self):
+        self.asset()
+        self.client.force_authenticate(self.viewer)
+        response = self.playback(native=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['type'], 'hls')
+        expected = '; '.join(f'{name}={response.cookies[name].value}' for name in
+            ('CloudFront-Policy', 'CloudFront-Signature', 'CloudFront-Key-Pair-Id'))
+        self.assertEqual(response.data['headers'], {'Cookie': expected})
+        self.assertNotIn('headers', self.playback().data)
+
     def test_processing_or_failed_source_never_becomes_legacy_fallback(self):
         asset = self.asset('uploaded')
         self.client.force_authenticate(self.viewer)
