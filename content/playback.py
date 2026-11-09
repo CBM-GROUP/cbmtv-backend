@@ -155,6 +155,9 @@ class PlaybackView(PrivateResponseMixin, APIView):
         response = Response({'state': 'ready', 'type': source_type, 'expires_at': expires.isoformat(),
             'content': content.pk, **selection, 'with_credentials': source_type == 'hls'})
         response.data['url'] = grant(response, source, expires, hls=source_type == 'hls')
+        if source_type == 'hls' and request.data.get('native') is True:
+            names = ('CloudFront-Policy', 'CloudFront-Signature', 'CloudFront-Key-Pair-Id')
+            response.data['headers'] = {'Cookie': '; '.join(f'{name}={response.cookies[name].value}' for name in names)}
         session = playback_session(request, content, selection)
         response.data['session_id'] = str(session.pk)
         return response
