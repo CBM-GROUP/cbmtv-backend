@@ -143,6 +143,29 @@ class AdvertisingTests(APITestCase):
         self.assertEqual(report['summary']['requests'], 1)
         self.assertIsNone(report['summary']['completion_rate'])
         self.assertEqual(report['by_placement'][0]['decision__placement_id'], 'content_sponsor')
+        self.assertEqual(report['by_creative'][0]['decision__creative_id'], self.creative.pk)
+        filtered = self.client.get(BASE + 'reports/', {'creative': self.creative.pk}).data
+        self.assertEqual(filtered['summary']['impression'], 1)
+        self.assertEqual(filtered['by_campaign'][0]['impression'], filtered['by_creative'][0]['impression'])
+        self.assertEqual(self.client.get(BASE + 'reports/', {'creative': 'invalid'}).status_code, 400)
+
+    def test_campaign_totals_equal_individual_advert_events(self):
+        first_token, first = self.served()
+        self.assertEqual(self.event(first_token, first).status_code, 200)
+        second = Creative.objects.create(name='Second advert', campaign=self.campaign, kind='image',
+            image=self.creative.image, approval='approved', placements=self.creative.placements)
+        self.creative.approval = 'draft'; self.creative.save(update_fields=['approval'])
+        second_token, decision = self.served()
+        self.assertEqual(decision.creative_id, second.pk)
+        self.assertEqual(self.event(second_token, decision).status_code, 200)
+        self.client.force_authenticate(self.staff)
+        data = self.client.get(BASE + 'reports/', {'campaign': self.campaign.pk}).data
+        self.assertEqual(data['summary']['impression'], 2)
+        self.assertEqual(sum(row['impression'] for row in data['by_creative']), 2)
+        self.assertEqual(data['by_campaign'][0]['impression'], 2)
+        filtered = self.client.get(BASE + 'reports/', {'creative': second.pk}).data
+        self.assertEqual(filtered['summary']['impression'], 1)
+        self.assertEqual(filtered['by_date'][0]['impression'], 1)
 
     def test_early_forged_cross_session_and_replayed_events(self):
         token = self.session().data['session']

@@ -124,6 +124,19 @@ class DiscoveryTests(APITestCase):
         self.assertEqual(ids, [self.related.pk, self.movie.pk])
         self.assertEqual(self.client.get('/api/discovery/rankings/trending/', {'period': '30d'}).status_code, 400)
 
+    def test_channel_top_content_uses_qualified_views_in_range(self):
+        hour = timezone.now().replace(minute=0, second=0, microsecond=0)
+        ContentHourlyMetric.objects.create(hour=hour, content=self.movie, qualified_views=4)
+        ContentHourlyMetric.objects.create(hour=hour, content=self.related, qualified_views=2)
+        ContentHourlyMetric.objects.create(hour=hour, content=self.hidden, qualified_views=99)
+        analyst = User.objects.create_superuser('channel-analyst@cbmtv.test', 'Analyst', password='test')
+        self.client.force_authenticate(analyst)
+        data = self.client.get('/api/discovery/analytics/').data
+        self.assertEqual(data['channel_top_content'][self.channel.pk], [
+            {'content_id': self.movie.pk, 'title': self.movie.title, 'count': 4},
+            {'content_id': self.related.pk, 'title': self.related.title, 'count': 2},
+        ])
+
     def test_anonymous_event_rate_limit(self):
         self.client.defaults['REMOTE_ADDR'] = '198.51.100.71'
         for _ in range(30):
