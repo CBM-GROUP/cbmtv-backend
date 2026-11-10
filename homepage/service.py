@@ -24,6 +24,7 @@ def configuration():
         'featured_titles': list(FeaturedTitle.objects.select_related('content', 'content__channel').prefetch_related('content__genres')),
         'featured_channels': list(FeaturedChannel.objects.select_related('channel')),
         'new_releases': {'duration': config.release_duration, 'unit': config.release_unit},
+        'advert_insertion': {'enabled': config.advert_insertion_enabled, 'interval': config.advert_interval},
     }
 
 
@@ -104,4 +105,4 @@ def build_homepage(config, user=None, now=None):
             row['items'] = ContentSerializer(titles, many=True).data
         elif key in CATEGORY_FLAGS:
             row['items'] = ContentSerializer(public.filter(category=key).order_by('-id')[:12], many=True).data
-    return {'sections': sections}
+    return {'sections': sections, 'advert_insertion': config.get('advert_insertion', {'enabled': False, 'interval': 3})}

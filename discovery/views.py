@@ -133,6 +133,15 @@ class DiscoveryAnalyticsView(PrivateResponseMixin, APIView):
         categories = list(titles.values('content__category').annotate(count=Sum('qualified_views')).order_by('-count', 'content__category'))
         channels = list(titles.values('content__channel_id', 'content__channel__name').annotate(count=Sum('qualified_views'))
             .order_by('-count', 'content__channel_id')[:20])
+        channel_ids = [row['content__channel_id'] for row in channels]
+        channel_titles = titles.filter(content__channel_id__in=channel_ids).values(
+            'content__channel_id', 'content_id', 'content__title').annotate(count=Sum('qualified_views')).filter(
+            count__gt=0).order_by('content__channel_id', '-count', 'content_id')
+        channel_top = {}
+        for item in channel_titles:
+            group = channel_top.setdefault(item['content__channel_id'], [])
+            if len(group) < 3:
+                group.append({'content_id': item['content_id'], 'title': item['content__title'], 'count': item['count']})
         recent_start = max(after, before - timedelta(days=1))
         trend_ids = list(trending_metrics(max(after, before - timedelta(days=7)), before, recent_start)
             .values_list('content_id', flat=True)[:10])
@@ -145,4 +154,4 @@ class DiscoveryAnalyticsView(PrivateResponseMixin, APIView):
             'trending': [{'content_id': pk, 'title': trend_titles[pk]} for pk in trend_ids if pk in trend_titles],
             'popular_queries': terms, 'zero_result_queries': zero,
             'views_over_time': views_time, 'searches_over_time': search_time,
-            'categories': categories, 'channels': channels})
+            'categories': categories, 'channels': channels, 'channel_top_content': channel_top})

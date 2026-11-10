@@ -8,12 +8,17 @@ class HomepageConfiguration(models.Model):
     id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
     sections = models.JSONField(default=default_sections)
     release_duration = models.PositiveIntegerField(default=30)
+    advert_insertion_enabled = models.BooleanField(default=False)
+    advert_interval = models.PositiveIntegerField(default=3)
     release_unit = models.CharField(max_length=6, default='days', choices=[
         (unit, unit) for unit in ('hours', 'days', 'months', 'years')
     ])
 
     class Meta:
-        constraints = [models.CheckConstraint(condition=Q(id=1), name='homepage_singleton')]
+        constraints = [
+            models.CheckConstraint(condition=Q(id=1), name='homepage_singleton'),
+            models.CheckConstraint(condition=Q(advert_interval__gte=1), name='homepage_advert_interval_positive'),
+        ]
 
 
 class FeaturedTitle(models.Model):

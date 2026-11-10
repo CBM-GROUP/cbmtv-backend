@@ -33,6 +33,9 @@ class ManagementView(PrivateResponseMixin, APIView):
         config.sections = data['sections']
         config.release_duration = data['new_releases']['duration']
         config.release_unit = data['new_releases']['unit']
+        if 'advert_insertion' in data:
+            config.advert_insertion_enabled = data['advert_insertion']['enabled']
+            config.advert_interval = data['advert_insertion']['interval']
         config.save()
         FeaturedTitle.objects.all().delete()
         FeaturedChannel.objects.all().delete()

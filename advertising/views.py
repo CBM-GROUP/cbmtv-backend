@@ -19,6 +19,7 @@ from content.models import Content, Genre
 from content.publication import public_eligibility
 from content.taxonomy import CATEGORY_CHOICES
 from channel.models import Channel
+from homepage.models import HomepageConfiguration
 from .constants import PLACEMENTS
 from .models import Advertiser, Campaign, Creative, Placement, Audit, Decision
 from .serializers import AdvertiserSerializer, CampaignSerializer, CreativeSerializer, PlacementSerializer, creative_ready, media_duration
@@ -199,7 +200,9 @@ class SessionView(PublicAdView):
         session = context_session(request.data, request.user)
         placements = Placement.objects.filter(enabled=True)
         rows = [{'code': p.code, 'breakpoints': p.breakpoints} for p in placements
-                if placement_allowed(session, p, str(p.breakpoints[0]) if p.code == 'midroll' and p.breakpoints else 'once')]
+                if (placement_allowed(session, p, str(p.breakpoints[0]) if p.code == 'midroll' and p.breakpoints else 'once')
+                    or session.context == 'homepage' and p.code == 'homepage_featured_sponsor'
+                    and placement_allowed(session, p, 'featured-' + str((HomepageConfiguration.objects.filter(pk=1).first() or HomepageConfiguration()).advert_interval)))]
         return Response({'enabled': True, 'session': receipt(session), 'placements': rows})
 
 

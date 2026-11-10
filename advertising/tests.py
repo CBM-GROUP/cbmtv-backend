@@ -90,6 +90,25 @@ class AdvertisingTests(APITestCase):
         for private in ['PRIVATE', 'private@example.com', 'source_key', 'impression_limit', 'billing_reference']:
             self.assertNotIn(private, str(result.data))
 
+    def test_featured_insertion_uses_existing_campaign_eligibility(self):
+        code = 'homepage_featured_sponsor'
+        Placement.objects.update_or_create(code=code, defaults={'enabled': True})
+        self.campaign.placements.append(code); self.campaign.save(update_fields=['placements'])
+        self.creative.placements.append(code); self.creative.save(update_fields=['placements'])
+        config, _ = HomepageConfiguration.objects.get_or_create(pk=1)
+        config.advert_insertion_enabled = True
+        for interval in (1, 2, 3):
+            config.advert_interval = interval; config.save()
+            token = self.session('homepage').data['session']
+            self.assertEqual(self.decision(token, code, break_key=f'featured-{interval}').data['ad']['name'], self.creative.name)
+            self.assertEqual(self.decision(token, code, break_key=f'featured-{interval + 1 if interval > 1 else 21}').status_code, 400)
+        self.assertEqual(Event.objects.count(), 0)
+        config.advert_insertion_enabled = False; config.save()
+        self.assertEqual(self.decision(self.session('homepage').data['session'], code, break_key='featured-3').status_code, 400)
+        config.advert_insertion_enabled = True; config.save()
+        self.creative.approval = 'draft'; self.creative.save(update_fields=['approval'])
+        self.assertIsNone(self.decision(self.session('homepage').data['session'], code, break_key='featured-3').data['ad'])
+
     def test_flag_and_placements_fail_open(self):
         with override_settings(ADVERTISING_ENABLED=False):
             self.assertFalse(self.session().data['enabled'])
@@ -124,6 +143,29 @@ class AdvertisingTests(APITestCase):
         self.assertEqual(report['summary']['requests'], 1)
         self.assertIsNone(report['summary']['completion_rate'])
         self.assertEqual(report['by_placement'][0]['decision__placement_id'], 'content_sponsor')
+        self.assertEqual(report['by_creative'][0]['decision__creative_id'], self.creative.pk)
+        filtered = self.client.get(BASE + 'reports/', {'creative': self.creative.pk}).data
+        self.assertEqual(filtered['summary']['impression'], 1)
+        self.assertEqual(filtered['by_campaign'][0]['impression'], filtered['by_creative'][0]['impression'])
+        self.assertEqual(self.client.get(BASE + 'reports/', {'creative': 'invalid'}).status_code, 400)
+
+    def test_campaign_totals_equal_individual_advert_events(self):
+        first_token, first = self.served()
+        self.assertEqual(self.event(first_token, first).status_code, 200)
+        second = Creative.objects.create(name='Second advert', campaign=self.campaign, kind='image',
+            image=self.creative.image, approval='approved', placements=self.creative.placements)
+        self.creative.approval = 'draft'; self.creative.save(update_fields=['approval'])
+        second_token, decision = self.served()
+        self.assertEqual(decision.creative_id, second.pk)
+        self.assertEqual(self.event(second_token, decision).status_code, 200)
+        self.client.force_authenticate(self.staff)
+        data = self.client.get(BASE + 'reports/', {'campaign': self.campaign.pk}).data
+        self.assertEqual(data['summary']['impression'], 2)
+        self.assertEqual(sum(row['impression'] for row in data['by_creative']), 2)
+        self.assertEqual(data['by_campaign'][0]['impression'], 2)
+        filtered = self.client.get(BASE + 'reports/', {'creative': second.pk}).data
+        self.assertEqual(filtered['summary']['impression'], 1)
+        self.assertEqual(filtered['by_date'][0]['impression'], 1)
 
     def test_early_forged_cross_session_and_replayed_events(self):
         token = self.session().data['session']

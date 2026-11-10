@@ -47,6 +47,18 @@ class HomepageTests(TestCase):
         self.assertEqual(response.status_code, 200)
         return next(row for row in response.data['sections'] if row['id'] == key)
 
+    def test_advert_insertion_defaults_validation_and_legacy_put(self):
+        self.assertEqual(self.client.get('/api/homepage/').data['advert_insertion'], {'enabled': False, 'interval': 3})
+        data = self.payload()
+        data['advert_insertion'] = {'enabled': True, 'interval': 2}
+        self.assertEqual(self.save(data).status_code, 200)
+        self.assertEqual(self.client.get('/api/homepage/').data['advert_insertion'], data['advert_insertion'])
+        for invalid in (0, -1, 1.5, 1001):
+            bad = {**data, 'advert_insertion': {'enabled': True, 'interval': invalid}}
+            self.assertEqual(self.save(bad).status_code, 400)
+        self.assertEqual(self.save(self.payload()).status_code, 200)
+        self.assertEqual(self.client.get('/api/homepage/').data['advert_insertion'], data['advert_insertion'])
+
     def test_anonymous_defaults_and_no_database_write(self):
         response = self.client.get('/api/homepage/')
         self.assertEqual([row['id'] for row in response.data['sections']], [row['id'] for row in default_sections()])
