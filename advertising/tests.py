@@ -90,6 +90,25 @@ class AdvertisingTests(APITestCase):
         for private in ['PRIVATE', 'private@example.com', 'source_key', 'impression_limit', 'billing_reference']:
             self.assertNotIn(private, str(result.data))
 
+    def test_featured_insertion_uses_existing_campaign_eligibility(self):
+        code = 'homepage_featured_sponsor'
+        Placement.objects.update_or_create(code=code, defaults={'enabled': True})
+        self.campaign.placements.append(code); self.campaign.save(update_fields=['placements'])
+        self.creative.placements.append(code); self.creative.save(update_fields=['placements'])
+        config, _ = HomepageConfiguration.objects.get_or_create(pk=1)
+        config.advert_insertion_enabled = True
+        for interval in (1, 2, 3):
+            config.advert_interval = interval; config.save()
+            token = self.session('homepage').data['session']
+            self.assertEqual(self.decision(token, code, break_key=f'featured-{interval}').data['ad']['name'], self.creative.name)
+            self.assertEqual(self.decision(token, code, break_key=f'featured-{interval + 1 if interval > 1 else 21}').status_code, 400)
+        self.assertEqual(Event.objects.count(), 0)
+        config.advert_insertion_enabled = False; config.save()
+        self.assertEqual(self.decision(self.session('homepage').data['session'], code, break_key='featured-3').status_code, 400)
+        config.advert_insertion_enabled = True; config.save()
+        self.creative.approval = 'draft'; self.creative.save(update_fields=['approval'])
+        self.assertIsNone(self.decision(self.session('homepage').data['session'], code, break_key='featured-3').data['ad'])
+
     def test_flag_and_placements_fail_open(self):
         with override_settings(ADVERTISING_ENABLED=False):
             self.assertFalse(self.session().data['enabled'])
