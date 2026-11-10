@@ -50,11 +50,17 @@ class NewReleasesSerializer(serializers.Serializer):
     unit = serializers.ChoiceField(choices=('hours', 'days', 'months', 'years'))
 
 
+class AdvertInsertionSerializer(serializers.Serializer):
+    enabled = serializers.BooleanField()
+    interval = serializers.IntegerField(min_value=1, max_value=1000)
+
+
 class ConfigurationSerializer(serializers.Serializer):
     sections = SectionSerializer(many=True)
     featured_titles = TitlePlacementSerializer(many=True, max_length=20)
     featured_channels = ChannelPlacementSerializer(many=True, max_length=30)
     new_releases = NewReleasesSerializer()
+    advert_insertion = AdvertInsertionSerializer(required=False)
 
     def validate_sections(self, value):
         ids = [row['id'] for row in value]

@@ -92,11 +92,17 @@ def placement_allowed(session, placement, break_key):
         if code not in VIDEO_PLACEMENTS:
             return False
         return break_key in [str(n) for n in placement.breakpoints] if code == 'midroll' else break_key == 'once'
-    if break_key != 'once':
-        return False
     if session.context == 'homepage':
         config = HomepageConfiguration.objects.filter(pk=1).first() or HomepageConfiguration()
+        if code == 'homepage_featured_sponsor' and break_key.startswith('featured-'):
+            slot = break_key.removeprefix('featured-')
+            return (config.advert_insertion_enabled and slot.isdecimal() and
+                    1 <= int(slot) <= 20 and int(slot) % config.advert_interval == 0)
+        if break_key != 'once':
+            return False
         return code in HOMEPAGE_PLACEMENTS and any(s['id'] == code and s['enabled'] for s in config.sections)
+    if break_key != 'once':
+        return False
     return code == {'channel': 'channel_sponsor', 'content': 'content_sponsor'}.get(session.context)
 
 
