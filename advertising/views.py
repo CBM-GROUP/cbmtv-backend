@@ -1,6 +1,6 @@
 import math
 from django.conf import settings
-from django.db import transaction
+from django.db import transaction, models
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import permissions, viewsets, serializers
@@ -20,11 +20,25 @@ from content.publication import public_eligibility
 from content.taxonomy import CATEGORY_CHOICES
 from channel.models import Channel
 from .constants import PLACEMENTS
-from .models import Advertiser, Campaign, Creative, Placement, Audit, Decision
-from .serializers import AdvertiserSerializer, CampaignSerializer, CreativeSerializer, PlacementSerializer, creative_ready, media_duration
-from .delivery import context_session, receipt, authorized_session, decide, ingest, identifier, placement_allowed
+from .models import Advertiser, Campaign, Creative, Placement, Audit, Decision, DeliveryAllocation, AdvertisingOperation
+from .serializers import AdvertiserSerializer, CampaignSerializer, CreativeSerializer, PlacementSerializer, DeliveryAllocationSerializer, creative_ready, media_duration
+from .delivery import context_session, receipt, authorized_session, decide, ingest, identifier, placement_allowed, advertising_available
 from .media import upload_image, StorageUnavailable
 from .reports import report
+
+
+class HasAdvertisingAccess(permissions.BasePermission):
+    """New scoped grants coexist with the existing adverts grant."""
+    def has_permission(self, request, view):
+        granted = set(dashboard_permissions(request.user))
+        resource = getattr(view, 'resource_permission', 'advertising_view')
+        if getattr(view, 'action', None) == 'create' and isinstance(view, CreativeViewSet):
+            resource = 'advertising_upload_creatives'
+        if getattr(view, 'action', None) in ('list', 'retrieve') or request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return bool({'adverts', getattr(view, 'read_permission', 'advertising_view'), resource} & granted)
+        if getattr(view, 'action', None) == 'workflow':
+            return bool({'adverts', resource, 'advertising_approval', 'advertising_approve_creatives', 'advertising_activate'} & granted)
+        return bool({'adverts', resource} & granted)
 
 
 class AdAnonThrottle(AnonRateThrottle):
@@ -38,7 +52,7 @@ class AdUserThrottle(UserRateThrottle):
 
 
 class StaffViewSet(PrivateResponseMixin, viewsets.ModelViewSet):
-    permission_classes = [HasDashboardSection]
+    permission_classes = [HasAdvertisingAccess]
     required_section = 'adverts'
     pagination_class = StandardPagination
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
@@ -56,25 +70,35 @@ class StaffViewSet(PrivateResponseMixin, viewsets.ModelViewSet):
     def update(self, request, *args, **kwargs):
         with transaction.atomic():
             instance = self.get_object()
-            if isinstance(instance, (Campaign, Creative)):
+            if isinstance(instance, (Campaign, Creative)) and (isinstance(instance, Campaign) or instance.campaign_id):
                 Campaign.objects.select_for_update(of=('self',)).get(pk=instance.pk if isinstance(instance, Campaign) else instance.campaign_id)
             instance = self.get_queryset().select_for_update(of=('self',)).get(pk=instance.pk)
             serializer = self.get_serializer(instance, data=request.data, partial=True)
             serializer.is_valid(raise_exception=True)
+            old_default = getattr(instance, 'default_destination_url', None)
             if isinstance(instance, Campaign):
                 serializer.save(approval='draft', status='paused')
                 Decision.objects.filter(campaign=instance, terminal_at__isnull=True).update(terminal_at=timezone.now(), reason='configuration_changed')
+                if old_default != instance.default_destination_url:
+                    Creative.objects.filter(campaign=instance, destination_url='').update(approval='draft', updated_at=timezone.now())
             elif isinstance(instance, Creative):
                 serializer.save(approval='draft')
                 Decision.objects.filter(creative=instance, terminal_at__isnull=True).update(terminal_at=timezone.now(), reason='configuration_changed')
                 MediaAsset.objects.filter(pk=instance.media_id, purpose='protected', state='uploaded').update(state='queued')
             else:
                 serializer.save()
+                if isinstance(instance, Advertiser) and old_default != instance.default_destination_url:
+                    inherited = Creative.objects.filter(advertiser=instance, destination_url='').filter(
+                        models.Q(campaign__isnull=True) | models.Q(campaign__default_destination_url=''))
+                    Decision.objects.filter(creative__in=inherited, terminal_at__isnull=True).update(
+                        terminal_at=timezone.now(), reason='configuration_changed')
+                    inherited.update(approval='draft', updated_at=timezone.now())
             self.audit(instance, 'updated')
             return Response(serializer.data)
 
 
 class AdvertiserViewSet(StaffViewSet):
+    resource_permission = 'advertising_manage_clients'
     queryset = Advertiser.objects.order_by('-pk')
     serializer_class = AdvertiserSerializer
 
@@ -85,11 +109,21 @@ class WorkflowViewSet(StaffViewSet):
         if not isinstance(request.data, dict):
             raise ValidationError('Provide an object containing the workflow action.')
         operation = request.data.get('action')
-        if operation in ('approve', 'reject') and 'advertising_approval' not in dashboard_permissions(request.user):
-            raise PermissionDenied('Advertising approval permission is required.')
+        if operation in ('resume', 'pause', 'complete') and not ({'adverts', 'advertising_activate'} & set(dashboard_permissions(request.user))):
+            raise PermissionDenied('Advertising activation permission is required.')
         with transaction.atomic():
             current = self.get_object()
-            Campaign.objects.select_for_update(of=('self',)).get(pk=current.pk if isinstance(current, Campaign) else current.campaign_id)
+            granted = set(dashboard_permissions(request.user))
+            if operation == 'submit':
+                required = 'advertising_create_campaigns' if isinstance(current, Campaign) else 'advertising_edit_creatives'
+                if not ({'adverts', required} & granted):
+                    raise PermissionDenied('Advertising editing permission is required.')
+            if operation in ('approve', 'reject'):
+                required = {'advertising_approval'} if isinstance(current, Campaign) else {'advertising_approval', 'advertising_approve_creatives'}
+                if not required & granted:
+                    raise PermissionDenied('Advertising approval permission is required.')
+            if isinstance(current, Campaign) or current.campaign_id:
+                Campaign.objects.select_for_update(of=('self',)).get(pk=current.pk if isinstance(current, Campaign) else current.campaign_id)
             current = self.get_queryset().select_for_update(of=('self',)).get(pk=current.pk)
             if operation == 'submit' and current.approval in ('draft', 'rejected'):
                 current.approval = 'review'
@@ -109,7 +143,9 @@ class WorkflowViewSet(StaffViewSet):
             elif isinstance(current, Campaign) and operation == 'pause' and current.status != 'completed':
                 current.status = 'paused'
             elif isinstance(current, Campaign) and operation == 'resume' and current.approval == 'approved' and current.status != 'completed':
-                if not current.advertiser.active or current.ends_at <= timezone.now() or not current.creatives.filter(approval='approved').exists():
+                if (not current.advertiser.active or not current.starts_at or not current.ends_at
+                        or current.ends_at <= timezone.now() or not current.placements
+                        or not current.creatives.filter(approval='approved').exists()):
                     raise ValidationError('Resumption requires an active advertiser, eligible schedule and approved creative.')
                 current.status = 'active'
             elif isinstance(current, Campaign) and operation == 'complete':
@@ -122,6 +158,7 @@ class WorkflowViewSet(StaffViewSet):
 
 
 class CampaignViewSet(WorkflowViewSet):
+    resource_permission = 'advertising_create_campaigns'
     queryset = Campaign.objects.select_related('advertiser').order_by('-pk')
     serializer_class = CampaignSerializer
 
@@ -134,7 +171,8 @@ class CampaignViewSet(WorkflowViewSet):
 
 
 class CreativeViewSet(WorkflowViewSet):
-    queryset = Creative.objects.select_related('campaign', 'media', 'image').order_by('-pk')
+    resource_permission = 'advertising_edit_creatives'
+    queryset = Creative.objects.select_related('advertiser', 'campaign', 'campaign__advertiser', 'media', 'image').order_by('-pk')
     serializer_class = CreativeSerializer
 
     def get_queryset(self):
@@ -142,13 +180,17 @@ class CreativeViewSet(WorkflowViewSet):
         if self.request.query_params.get('campaign'):
             value = serializers.IntegerField(min_value=1).run_validation(self.request.query_params['campaign'])
             queryset = queryset.filter(campaign_id=value)
+        if self.request.query_params.get('advertiser'):
+            value = serializers.IntegerField(min_value=1).run_validation(self.request.query_params['advertiser'])
+            queryset = queryset.filter(advertiser_id=value)
         return queryset
 
     @action(detail=True, methods=['post'])
     @transaction.atomic
     def preview(self, request, pk=None):
         creative = self.get_object()
-        Campaign.objects.select_for_update(of=('self',)).get(pk=creative.campaign_id)
+        if creative.campaign_id:
+            Campaign.objects.select_for_update(of=('self',)).get(pk=creative.campaign_id)
         creative = self.get_queryset().select_for_update(of=('self',)).get(pk=creative.pk)
         if creative.kind == 'image':
             self.audit(creative, 'previewed')
@@ -165,13 +207,99 @@ class CreativeViewSet(WorkflowViewSet):
 
 
 class PlacementViewSet(StaffViewSet):
+    resource_permission = 'advertising_manage_delivery'
     queryset = Placement.objects.order_by('code')
     serializer_class = PlacementSerializer
     http_method_names = ['get', 'patch', 'head', 'options']
 
 
-class ImageUploadView(PrivateResponseMixin, APIView):
+class DeliveryAllocationViewSet(StaffViewSet):
+    resource_permission = 'advertising_manage_delivery'
+    queryset = DeliveryAllocation.objects.select_related('creative', 'creative__campaign', 'placement').order_by('-pk')
+    serializer_class = DeliveryAllocationSerializer
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        if not isinstance(request.data, dict):
+            raise ValidationError('Provide an allocation object.')
+        creative_id = serializers.IntegerField(min_value=1).run_validation(request.data.get('creative'))
+        get_object_or_404(Creative.objects.select_for_update(), pk=creative_id)
+        return super().create(request, *args, **kwargs)
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        allocation = self.get_object()
+        Creative.objects.select_for_update().get(pk=allocation.creative_id)
+        return super().update(request, *args, **kwargs)
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.request.query_params.get('creative'):
+            value = serializers.IntegerField(min_value=1).run_validation(self.request.query_params['creative'])
+            queryset = queryset.filter(creative_id=value)
+        return queryset
+
+    @action(detail=True, methods=['post'])
+    def workflow(self, request, pk=None):
+        if not ({'adverts', 'advertising_activate'} & set(dashboard_permissions(request.user))):
+            raise PermissionDenied('Advertising activation permission is required.')
+        if not isinstance(request.data, dict):
+            raise ValidationError('Provide an object containing the workflow action.')
+        operation = request.data.get('action')
+        with transaction.atomic():
+            allocation = self.get_queryset().select_for_update(of=('self',)).get(pk=self.get_object().pk)
+            if operation == 'activate':
+                if allocation.creative.approval != 'approved' or not creative_ready(allocation.creative):
+                    raise ValidationError('Approve a ready creative before activation.')
+                if not allocation.creative.advertiser.active:
+                    raise ValidationError('The client is inactive.')
+                campaign = allocation.creative.campaign
+                if campaign and (campaign.approval != 'approved' or allocation.placement_id not in campaign.placements):
+                    raise ValidationError('Approve the campaign and include this placement before activation.')
+                if allocation.ends_at and allocation.ends_at <= timezone.now():
+                    raise ValidationError('The allocation has expired.')
+                allocation.status = 'active'
+            elif operation == 'pause':
+                allocation.status = 'paused'
+            elif operation == 'complete':
+                allocation.status = 'completed'
+            else:
+                raise ValidationError('This workflow transition is unavailable.')
+            allocation.save(update_fields=['status', 'updated_at'])
+            self.audit(allocation, operation)
+        return Response(self.get_serializer(allocation).data)
+
+
+class AdvertisingOperationView(PrivateResponseMixin, APIView):
     permission_classes = [HasDashboardSection]
+    required_section = ('adverts', 'advertising_view', 'advertising_settings')
+
+    def get(self, request):
+        operation = AdvertisingOperation.objects.filter(pk=1).first()
+        return Response({'backend_enabled': settings.ADVERTISING_ENABLED,
+                         'operational_enabled': operation.enabled if operation else True,
+                         'effective_enabled': advertising_available()})
+
+    def patch(self, request):
+        if 'advertising_settings' not in dashboard_permissions(request.user):
+            raise PermissionDenied('Advertising settings permission is required.')
+        if not isinstance(request.data, dict):
+            raise ValidationError('Provide an object containing enabled.')
+        enabled = request.data.get('enabled')
+        if type(enabled) is not bool:
+            raise ValidationError({'enabled': 'Provide a boolean.'})
+        with transaction.atomic():
+            operation, _ = AdvertisingOperation.objects.select_for_update().get_or_create(pk=1)
+            operation.enabled = enabled
+            operation.save(update_fields=['enabled', 'updated_at'])
+            Audit.objects.create(actor=request.user, resource='advertisingoperation', resource_id='1',
+                                 action='enabled' if enabled else 'paused')
+        return self.get(request)
+
+
+class ImageUploadView(PrivateResponseMixin, APIView):
+    permission_classes = [HasAdvertisingAccess]
+    resource_permission = 'advertising_upload_creatives'
     required_section = 'adverts'
     throttle_classes = [AdUserThrottle]
 
@@ -194,7 +322,7 @@ class PublicAdView(PrivateResponseMixin, APIView):
 
 class SessionView(PublicAdView):
     def post(self, request):
-        if not settings.ADVERTISING_ENABLED:
+        if not advertising_available():
             return Response({'enabled': False, 'session': None, 'placements': []})
         session = context_session(request.data, request.user)
         placements = Placement.objects.filter(enabled=True)
@@ -205,7 +333,7 @@ class SessionView(PublicAdView):
 
 class DecisionView(PublicAdView):
     def post(self, request):
-        if not settings.ADVERTISING_ENABLED:
+        if not advertising_available():
             return Response({'ad': None, 'reason': 'disabled'})
         session = authorized_session(request.data.get('session'), request.user)
         code = request.data.get('placement')
@@ -233,15 +361,17 @@ class EventView(PublicAdView):
 
 
 class ReportView(PrivateResponseMixin, APIView):
-    permission_classes = [HasDashboardSection]
+    permission_classes = [HasAdvertisingAccess]
+    resource_permission = 'advertising_reports'
+    read_permission = 'advertising_reports'
     required_section = 'adverts'
 
     def get(self, request):
-        return Response({'enabled': settings.ADVERTISING_ENABLED, **report(request.query_params)})
+        return Response({'enabled': advertising_available(), **report(request.query_params)})
 
 
 class TargetOptionsView(PrivateResponseMixin, APIView):
-    permission_classes = [HasDashboardSection]
+    permission_classes = [HasAdvertisingAccess]
     required_section = 'adverts'
 
     def get(self, request):
