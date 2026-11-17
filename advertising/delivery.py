@@ -18,6 +18,12 @@ from homepage.models import HomepageConfiguration
 from .constants import HOMEPAGE_PLACEMENTS, VIDEO_PLACEMENTS, EVENTS
 from .models import AdSession, Decision, Campaign, CampaignDay, Creative, Placement, Event, AdRequest
 from .serializers import creative_ready, media_duration
+from .destinations import effective_destination
+from .models import AdvertisingOperation
+
+
+def advertising_available():
+    return settings.ADVERTISING_ENABLED and AdvertisingOperation.objects.filter(pk=1).values_list('enabled', flat=True).first() is not False
 
 
 def identifier(value):
@@ -123,6 +129,7 @@ def matches(campaign, session, region):
 
 def active(campaign, now):
     return (campaign.approval == 'approved' and campaign.status == 'active' and campaign.advertiser.active
+            and campaign.starts_at is not None and campaign.ends_at is not None
             and campaign.starts_at <= now < campaign.ends_at)
 
 
@@ -143,7 +150,7 @@ def promoted_eligible(creative):
 
 def payload(decision, response, region=''):
     now = timezone.now()
-    if (not settings.ADVERTISING_ENABLED or not decision.creative_id or decision.expires_at <= now
+    if (not advertising_available() or not decision.creative_id or decision.expires_at <= now
             or decision.terminal_at or not decision.placement.enabled or not active(decision.campaign, now)
             or decision.creative.approval != 'approved' or not promoted_eligible(decision.creative)
             or decision.placement_id not in decision.campaign.placements or decision.placement_id not in decision.creative.placements
@@ -152,7 +159,7 @@ def payload(decision, response, region=''):
         return {'ad': None, 'decision_id': str(decision.pk), 'reason': decision.reason or 'ineligible'}
     creative = decision.creative
     ad = {'decision_id': str(decision.pk), 'kind': creative.kind, 'name': creative.name,
-          'advertiser': decision.campaign.advertiser.name, 'destination_url': creative.destination_url,
+          'advertiser': creative.advertiser.name, 'destination_url': effective_destination(creative)[0],
           'cta': creative.cta, 'skippable_after': decision.campaign.skippable_after,
           'placement': decision.placement_id, 'expires_at': decision.expires_at.isoformat(),
           'promoted_content': creative.promoted_content_id, 'promoted_channel': creative.promoted_channel_id}
@@ -195,7 +202,7 @@ def decide(session, placement, break_key, request_id, response, region=''):
     choice = None
     campaign_choice = None
     reason = 'no_eligible_campaign'
-    if not settings.ADVERTISING_ENABLED:
+    if not advertising_available():
         reason = 'disabled'
     elif not placement.enabled or not placement_allowed(session, placement, break_key):
         reason = 'placement_disabled'
@@ -272,7 +279,7 @@ def ingest(session, decision_id, kind, position):
     if Event.objects.filter(decision=decision, kind=kind).exists():
         return {'accepted': True, 'duplicate': True}
     now = timezone.now()
-    if not settings.ADVERTISING_ENABLED or decision.expires_at <= now or decision.terminal_at:
+    if not advertising_available() or decision.expires_at <= now or decision.terminal_at:
         raise ValidationError('Decision is expired, stopped or already finished.')
     video = decision.creative.kind == 'video'
     elapsed = (now - decision.started_at).total_seconds() if decision.started_at else 0
@@ -310,7 +317,7 @@ def ingest(session, decision_id, kind, position):
             raise ValidationError('This advertisement is not skippable yet.')
         decision.terminal_at = now
     elif kind == 'click':
-        if not (decision.creative.destination_url or decision.creative.promoted_content_id or decision.creative.promoted_channel_id or decision.creative.promoted_contents):
+        if not (effective_destination(decision.creative)[0] or decision.creative.promoted_content_id or decision.creative.promoted_channel_id or decision.creative.promoted_contents):
             raise ValidationError('An approved click destination is required.')
     elif kind == 'failure':
         decision.terminal_at = now
