@@ -1,7 +1,11 @@
 from rest_framework.permissions import BasePermission
 
 
-DASHBOARD_SECTIONS = ('channels', 'content', 'adverts', 'settings', 'users', 'analytics', 'advertising_approval')
+DASHBOARD_SECTIONS = ('channels', 'content', 'adverts', 'settings', 'users', 'analytics', 'advertising_approval',
+    'advertising_view', 'advertising_manage_clients', 'advertising_create_campaigns',
+    'advertising_upload_creatives', 'advertising_edit_creatives', 'advertising_approve_creatives',
+    'advertising_manage_delivery', 'advertising_activate', 'advertising_reports',
+    'advertising_export', 'advertising_settings')
 
 
 def dashboard_permissions(user):
@@ -13,7 +17,7 @@ def dashboard_permissions(user):
         return [section for section in user.dashboard_role.permissions if section in DASHBOARD_SECTIONS]
     if user.is_staff:
         # Preserve legacy staff sections without silently granting the new analytics section.
-        return [section for section in DASHBOARD_SECTIONS if section not in ('analytics', 'advertising_approval')]
+        return ['channels', 'content', 'adverts', 'settings', 'users']
     return []
 
 

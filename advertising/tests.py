@@ -22,7 +22,7 @@ from content.test_media_uploads import TEST_STORAGE
 from discovery.models import PlaybackSession, DiscoveryEvent
 from homepage.models import HomepageConfiguration
 from homepage.defaults import default_sections
-from .models import Advertiser, Campaign, Creative, ImageAsset, Placement, Decision, Event, CampaignDay, AdRequest, Audit
+from .models import Advertiser, Campaign, Creative, ImageAsset, Placement, Decision, Event, CampaignDay, AdRequest, Audit, DeliveryAllocation, AdvertisingOperation
 from .delivery import context_session, decide, ingest
 from .serializers import safe_destination, targeting_rules
 
@@ -83,6 +83,187 @@ class AdvertisingTests(APITestCase):
         result = self.client.get(BASE + 'advertisers/')
         self.assertEqual(result.data['results'][0]['billing_reference'], 'PRIVATE')
         self.assertEqual(result['Cache-Control'], 'private, no-store')
+
+    def test_client_owned_preview_without_campaign_never_enters_legacy_delivery(self):
+        self.client.force_authenticate(self.staff)
+        result = self.client.post(BASE + 'creatives/', {
+            'name': 'Unscheduled', 'advertiser': self.advertiser.pk, 'kind': 'image',
+            'image': str(self.creative.image_id)}, format='json')
+        self.assertEqual(result.status_code, 201, result.data)
+        self.assertIsNone(result.data['campaign'])
+        self.assertEqual(result.data['approval'], 'draft')
+        self.assertEqual(result.data['placements'], [])
+        self.assertEqual(result.data['effective_destination_url'], '')
+        self.assertEqual(result.data['destination_source'], 'none')
+        direct = Creative.objects.get(pk=result.data['id'])
+        self.assertEqual(direct.advertiser_id, self.advertiser.pk)
+        self.assertEqual(self.client.post(BASE + f'creatives/{direct.pk}/workflow/', {'action': 'submit'}).status_code, 200)
+        self.assertEqual(self.client.post(BASE + f'creatives/{direct.pk}/preview/').status_code, 200)
+        approved = self.client.post(BASE + f'creatives/{direct.pk}/workflow/', {'action': 'approve'})
+        self.assertEqual(approved.status_code, 200, approved.data)
+        token = self.session().data['session']
+        self.assertEqual(self.decision(token).data['ad']['name'], self.creative.name)
+        self.assertFalse(Decision.objects.filter(creative=direct).exists())
+
+    def test_campaign_owned_legacy_create_and_mismatched_owner(self):
+        self.client.force_authenticate(self.staff)
+        base = {'name': 'Existing workflow', 'campaign': self.campaign.pk, 'kind': 'image',
+                'image': str(self.creative.image_id), 'placements': ['content_sponsor']}
+        valid = self.client.post(BASE + 'creatives/', base, format='json')
+        self.assertEqual(valid.status_code, 201, valid.data)
+        self.assertEqual(valid.data['advertiser'], self.advertiser.pk)
+        other = Advertiser.objects.create(name='Other')
+        invalid = self.client.post(BASE + 'creatives/', {**base, 'advertiser': other.pk}, format='json')
+        self.assertEqual(invalid.status_code, 400)
+        with self.assertRaises(ValueError):
+            Creative.objects.create(name='Mismatch', advertiser=other, campaign=self.campaign, kind='image')
+        self.assertEqual(self.client.patch(BASE + f'campaigns/{self.campaign.pk}/',
+            {'advertiser': other.pk}, format='json').status_code, 400)
+
+    def test_optional_campaign_can_group_preview_assets_before_schedule(self):
+        self.client.force_authenticate(self.staff)
+        campaign = self.client.post(BASE + 'campaigns/', {'name': 'Planning',
+            'advertiser': self.advertiser.pk}, format='json')
+        self.assertEqual(campaign.status_code, 201, campaign.data)
+        self.assertIsNone(campaign.data['starts_at'])
+        self.assertEqual(campaign.data['placements'], [])
+        creative = self.client.post(BASE + 'creatives/', {'name': 'Planning artwork',
+            'campaign': campaign.data['id'], 'kind': 'image', 'image': str(self.creative.image_id)}, format='json')
+        self.assertEqual(creative.status_code, 201, creative.data)
+        self.assertEqual(creative.data['advertiser'], self.advertiser.pk)
+        self.assertEqual(creative.data['approval'], 'draft')
+        flow = BASE + f"campaigns/{campaign.data['id']}/workflow/"
+        self.client.post(flow, {'action': 'submit'})
+        self.client.post(flow, {'action': 'approve'})
+        self.assertEqual(self.client.post(flow, {'action': 'resume'}).status_code, 400)
+
+    def test_destination_inheritance_and_link_reapproval(self):
+        self.client.force_authenticate(self.staff)
+        self.assertEqual(self.client.patch(BASE + f'advertisers/{self.advertiser.pk}/',
+            {'default_destination_url': 'https://client.example.com'}, format='json').status_code, 200)
+        self.assertEqual(self.client.patch(BASE + f'creatives/{self.creative.pk}/',
+            {'destination_url': ''}, format='json').status_code, 200)
+        path = BASE + f'creatives/{self.creative.pk}/'
+        self.assertEqual(self.client.get(path).data['destination_source'], 'advertiser')
+        self.assertEqual(self.client.get(path).data['effective_destination_url'], 'https://client.example.com')
+        self.client.patch(BASE + f'campaigns/{self.campaign.pk}/',
+            {'default_destination_url': 'https://campaign.example.com'}, format='json')
+        self.assertEqual(self.client.get(path).data['destination_source'], 'campaign')
+        self.client.patch(path, {'destination_url': 'https://creative.example.com'}, format='json')
+        self.assertEqual(self.client.get(path).data['destination_source'], 'creative')
+        self.assertEqual(self.client.patch(path, {'destination_url': 'http://unsafe.example.com'}, format='json').status_code, 400)
+        self.client.patch(path, {'destination_url': ''}, format='json')
+        self.campaign.refresh_from_db()
+        self.campaign.approval = 'approved'; self.campaign.status = 'active'; self.campaign.save()
+        self.creative.refresh_from_db()
+        self.creative.approval = 'approved'; self.creative.save()
+        token, decision = self.served()
+        self.assertEqual(self.decision(token).data['ad']['destination_url'], 'https://campaign.example.com')
+        self.client.patch(BASE + f'campaigns/{self.campaign.pk}/',
+            {'default_destination_url': 'https://changed.example.com'}, format='json')
+        self.creative.refresh_from_db()
+        decision.refresh_from_db()
+        self.assertEqual(self.creative.approval, 'draft')
+        self.assertIsNotNone(decision.terminal_at)
+
+    def test_client_link_change_revokes_only_inheriting_creatives(self):
+        self.client.force_authenticate(self.staff)
+        direct = Creative.objects.create(name='Direct', advertiser=self.advertiser, kind='image',
+            image=self.creative.image, approval='approved')
+        self.client.patch(BASE + f'advertisers/{self.advertiser.pk}/',
+            {'default_destination_url': 'https://first.example.com'}, format='json')
+        direct.refresh_from_db()
+        self.assertEqual(direct.approval, 'draft')
+        self.assertEqual(self.client.get(BASE + f'creatives/{direct.pk}/').data['destination_source'], 'advertiser')
+        self.creative.refresh_from_db()
+        self.assertEqual(self.creative.approval, 'approved')  # Its individual URL still wins.
+
+    def test_client_link_change_ends_served_inherited_decision(self):
+        self.client.force_authenticate(self.staff)
+        self.client.patch(BASE + f'creatives/{self.creative.pk}/', {'destination_url': ''}, format='json')
+        self.creative.refresh_from_db()
+        self.creative.approval = 'approved'; self.creative.save()
+        self.client.patch(BASE + f'advertisers/{self.advertiser.pk}/',
+            {'default_destination_url': 'https://first.example.com'}, format='json')
+        self.creative.refresh_from_db()
+        self.creative.approval = 'approved'; self.creative.save()
+        token, decision = self.served()
+        self.assertEqual(self.decision(token).data['ad']['destination_url'], 'https://first.example.com')
+        self.client.patch(BASE + f'advertisers/{self.advertiser.pk}/',
+            {'default_destination_url': 'https://second.example.com'}, format='json')
+        self.creative.refresh_from_db(); decision.refresh_from_db()
+        self.assertEqual(self.creative.approval, 'draft')
+        self.assertIsNotNone(decision.terminal_at)
+        self.assertIsNone(self.decision(token).data['ad'])
+
+    def test_allocation_is_independent_and_not_live(self):
+        self.client.force_authenticate(self.staff)
+        start = timezone.now().isoformat()
+        path = BASE + 'allocations/'
+        invalid = self.client.post(path, {'creative': self.creative.pk, 'placement': 'preroll',
+            'starts_at': start}, format='json')
+        self.assertEqual(invalid.status_code, 400)
+        created = self.client.post(path, {'creative': self.creative.pk, 'placement': 'content_sponsor',
+            'starts_at': start}, format='json')
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data['status'], 'paused')
+        allocation = DeliveryAllocation.objects.get(pk=created.data['id'])
+        self.assertIsNone(allocation.ends_at)
+        duplicate = self.client.post(path, {'creative': self.creative.pk, 'placement': 'content_sponsor',
+            'starts_at': start}, format='json')
+        self.assertEqual(duplicate.status_code, 400)
+        overlapping = self.client.post(path, {'creative': self.creative.pk, 'placement': 'content_sponsor',
+            'starts_at': (timezone.now() + timedelta(hours=1)).isoformat()}, format='json')
+        self.assertEqual(overlapping.status_code, 400)
+        second = self.client.post(path, {'creative': self.creative.pk, 'placement': 'channel_sponsor',
+            'starts_at': start}, format='json')
+        self.assertEqual(second.status_code, 201, second.data)
+        self.creative.approval = 'draft'; self.creative.save()
+        self.assertEqual(self.client.post(path + f'{allocation.pk}/workflow/', {'action': 'activate'}).status_code, 400)
+        self.creative.approval = 'approved'; self.creative.save()
+        self.assertEqual(self.client.post(path + f'{allocation.pk}/workflow/', {'action': 'activate'}).status_code, 200)
+        self.assertEqual(self.decision().data['ad']['name'], self.creative.name)
+
+    def test_allocation_date_constraint_rejects_end_before_start(self):
+        self.client.force_authenticate(self.staff)
+        now = timezone.now()
+        result = self.client.post(BASE + 'allocations/', {'creative': self.creative.pk,
+            'placement': 'content_sponsor', 'starts_at': now.isoformat(),
+            'ends_at': (now - timedelta(seconds=1)).isoformat()}, format='json')
+        self.assertEqual(result.status_code, 400)
+        self.assertFalse(DeliveryAllocation.objects.exists())
+
+    def test_operational_setting_cannot_override_backend_and_is_audited(self):
+        self.client.force_authenticate(self.staff)
+        path = BASE + 'operation/'
+        with override_settings(ADVERTISING_ENABLED=False):
+            result = self.client.patch(path, {'enabled': True}, format='json')
+            self.assertEqual(result.status_code, 200, result.data)
+            self.assertFalse(result.data['effective_enabled'])
+        self.assertEqual(self.client.patch(path, {'enabled': False}, format='json').status_code, 200)
+        self.assertFalse(self.session().data['enabled'])
+        HomepageConfiguration.objects.update_or_create(pk=1, defaults={'sections': [
+            {'id': 'featured_hero', 'enabled': True}, {'id': 'continue_watching', 'enabled': True},
+            {'id': 'homepage_banner', 'enabled': True}]})
+        homepage = self.client.get('/api/homepage/')
+        self.assertEqual(homepage.status_code, 200)
+        self.assertFalse(next(section for section in homepage.data['sections'] if section['id'] == 'homepage_banner')['enabled'])
+        self.assertEqual(self.client.patch(path, {'enabled': True}, format='json').status_code, 200)
+        self.assertTrue(self.session().data['enabled'])
+        self.assertEqual(Audit.objects.filter(resource='advertisingoperation').count(), 3)
+
+    def test_granular_role_cannot_approve_activate_or_change_settings(self):
+        role = DashboardRole.objects.create(name='Creative editor', permissions=['advertising_view', 'advertising_edit_creatives'])
+        editor = User.objects.create_user('creative-editor@example.com', 'Editor', password='test')
+        editor.dashboard_role = role; editor.save(update_fields=['dashboard_role'])
+        self.client.force_authenticate(editor)
+        self.assertEqual(self.client.get(BASE + 'creatives/').status_code, 200)
+        self.assertEqual(self.client.get(BASE + 'reports/').status_code, 403)
+        self.assertEqual(self.client.patch(BASE + 'operation/', {'enabled': False}, format='json').status_code, 403)
+        self.assertEqual(self.client.post(BASE + f'campaigns/{self.campaign.pk}/workflow/', {'action': 'resume'}).status_code, 403)
+        self.creative.approval = 'review'; self.creative.save()
+        self.assertEqual(self.client.post(BASE + f'creatives/{self.creative.pk}/workflow/', {'action': 'approve'}).status_code, 403)
+        self.assertEqual(self.client.post(BASE + f'campaigns/{self.campaign.pk}/workflow/', {'action': 'submit'}).status_code, 403)
 
     def test_public_payload_never_exposes_contact_source_or_budget(self):
         result = self.decision()
