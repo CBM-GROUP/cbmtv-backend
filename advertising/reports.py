@@ -28,10 +28,11 @@ def report(params):
     after = datetime.combine(start, time.min, tzinfo=timezone.utc)
     before = datetime.combine(end + timedelta(days=1), time.min, tzinfo=timezone.utc)
     filters = {}
-    for key in ('campaign', 'advertiser'):
+    for key in ('campaign', 'advertiser', 'creative'):
         if params.get(key):
             value = serializers.IntegerField(min_value=1).run_validation(params[key])
-            filters['decision__campaign_id' if key == 'campaign' else 'decision__campaign__advertiser_id'] = value
+            filters[{'campaign': 'decision__campaign_id', 'advertiser': 'decision__creative__advertiser_id',
+                     'creative': 'decision__creative_id'}[key]] = value
     events = Event.objects.filter(created_at__gte=after, created_at__lt=before, **filters)
     summary = rates(events.aggregate(**counts()))
     decision_filters = {key.removeprefix('decision__'): value for key, value in filters.items()}
@@ -49,7 +50,8 @@ def report(params):
         campaigns = campaigns.filter(advertiser_id=params['advertiser'])
     return {'from': start, 'to': end, 'summary': summary,
             'by_campaign': grouped('decision__campaign_id', 'decision__campaign__name'),
-            'by_advertiser': grouped('decision__campaign__advertiser_id', 'decision__campaign__advertiser__name'),
+            'by_advertiser': grouped('decision__creative__advertiser_id', 'decision__creative__advertiser__name'),
+            'by_creative': grouped('decision__creative_id', 'decision__creative__name'),
             'by_placement': grouped('decision__placement_id'),
             'by_date': [rates(row) for row in events.annotate(day=TruncDate('created_at', tzinfo=timezone.utc)).values('day').annotate(**counts()).order_by('day')],
             'cap_utilization': list(campaigns.annotate(today_impressions=Coalesce(Sum('campaignday__impressions', filter=Q(campaignday__day=today)), 0))

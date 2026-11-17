@@ -20,6 +20,7 @@ class Advertiser(Timestamped):
     phone = models.CharField(max_length=80, blank=True)
     billing_reference = models.CharField(max_length=200, blank=True)
     active = models.BooleanField(default=True)
+    default_destination_url = models.URLField(max_length=1000, blank=True)
 
 
 class Placement(Timestamped):
@@ -34,8 +35,9 @@ class Campaign(Timestamped):
     name = models.CharField(max_length=200)
     advertiser = models.ForeignKey(Advertiser, on_delete=models.PROTECT, related_name='campaigns')
     description = models.TextField(blank=True)
-    starts_at = models.DateTimeField()
-    ends_at = models.DateTimeField()
+    default_destination_url = models.URLField(max_length=1000, blank=True)
+    starts_at = models.DateTimeField(null=True, blank=True)
+    ends_at = models.DateTimeField(null=True, blank=True)
     approval = models.CharField(max_length=16, choices=APPROVALS, default='draft')
     status = models.CharField(max_length=16, default='paused', choices=[(s, s) for s in ('paused', 'active', 'completed')])
     priority = models.PositiveSmallIntegerField(default=1)
@@ -65,7 +67,8 @@ class ImageAsset(Timestamped):
 
 class Creative(Timestamped):
     name = models.CharField(max_length=200)
-    campaign = models.ForeignKey(Campaign, on_delete=models.PROTECT, related_name='creatives')
+    advertiser = models.ForeignKey(Advertiser, on_delete=models.PROTECT, related_name='creatives')
+    campaign = models.ForeignKey(Campaign, null=True, blank=True, on_delete=models.PROTECT, related_name='creatives')
     kind = models.CharField(max_length=10, choices=[('image', 'Image'), ('video', 'Video')])
     placements = models.JSONField(default=list)
     approval = models.CharField(max_length=16, choices=APPROVALS, default='draft')
@@ -77,6 +80,36 @@ class Creative(Timestamped):
     promoted_content = models.ForeignKey('content.Content', null=True, blank=True, on_delete=models.SET_NULL)
     promoted_channel = models.ForeignKey('channel.Channel', null=True, blank=True, on_delete=models.SET_NULL)
     promoted_contents = models.JSONField(default=list, blank=True)
+
+    def save(self, *args, **kwargs):
+        # Preserve existing internal callers that create a campaign-owned creative.
+        if self.campaign_id and not self.advertiser_id:
+            self.advertiser_id = self.campaign.advertiser_id
+        if self.campaign_id and self.advertiser_id != self.campaign.advertiser_id:
+            raise ValueError('Creative and campaign must belong to the same advertiser.')
+        super().save(*args, **kwargs)
+
+
+class DeliveryAllocation(Timestamped):
+    """Configured inventory only; the existing campaign decision engine remains authoritative."""
+    creative = models.ForeignKey(Creative, on_delete=models.PROTECT, related_name='allocations')
+    placement = models.ForeignKey(Placement, on_delete=models.PROTECT)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=16, default='paused', choices=[(s, s) for s in ('paused', 'active', 'completed')])
+    priority = models.PositiveSmallIntegerField(default=1)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=Q(ends_at__isnull=True) | Q(ends_at__gt=F('starts_at')), name='ad_allocation_schedule'),
+            models.UniqueConstraint(fields=['creative', 'placement', 'starts_at'], name='ad_allocation_unique_start'),
+        ]
+
+
+class AdvertisingOperation(models.Model):
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    enabled = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
 
 class AdSession(models.Model):

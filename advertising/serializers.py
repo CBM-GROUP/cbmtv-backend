@@ -2,6 +2,7 @@ import ipaddress
 import re
 from urllib.parse import urlsplit
 from django.utils import timezone
+from django.db.models import Q
 from rest_framework import serializers
 from content.models import Content, Genre
 from content.publication import public_eligibility
@@ -9,11 +10,11 @@ from content.taxonomy import CATEGORY_FLAGS
 from channel.models import Channel
 from homepage.serializers import AwareDateTimeField
 from .constants import PLACEMENTS, VIDEO_PLACEMENTS
-from .models import Advertiser, Campaign, Creative, Placement
+from .models import Advertiser, Campaign, Creative, Placement, DeliveryAllocation
 
 
 def placement_codes(value):
-    if not isinstance(value, list) or not value or len(value) != len(set(str(v) for v in value)) or any(not isinstance(v, str) or v not in PLACEMENTS for v in value):
+    if not isinstance(value, list) or len(value) != len(set(str(v) for v in value)) or any(not isinstance(v, str) or v not in PLACEMENTS for v in value):
         raise serializers.ValidationError('Choose unique supported placements.')
     return value
 
@@ -60,21 +61,22 @@ def targeting_rules(value):
 
 
 class AdvertiserSerializer(serializers.ModelSerializer):
+    validate_default_destination_url = staticmethod(safe_destination)
     class Meta:
         model = Advertiser
-        fields = ('id', 'name', 'contact_name', 'email', 'phone', 'billing_reference', 'active', 'created_at', 'updated_at')
+        fields = ('id', 'name', 'contact_name', 'email', 'phone', 'billing_reference', 'active', 'default_destination_url', 'created_at', 'updated_at')
         read_only_fields = ('created_at', 'updated_at')
 
 
 class CampaignSerializer(serializers.ModelSerializer):
-    starts_at = AwareDateTimeField()
-    ends_at = AwareDateTimeField()
-    validate_placements = staticmethod(placement_codes)
+    starts_at = AwareDateTimeField(required=False, allow_null=True)
+    ends_at = AwareDateTimeField(required=False, allow_null=True)
     validate_targeting = staticmethod(targeting_rules)
+    validate_default_destination_url = staticmethod(safe_destination)
 
     class Meta:
         model = Campaign
-        fields = ('id', 'name', 'advertiser', 'description', 'starts_at', 'ends_at', 'approval', 'status',
+        fields = ('id', 'name', 'advertiser', 'description', 'default_destination_url', 'starts_at', 'ends_at', 'approval', 'status',
                   'priority', 'placements', 'targeting', 'impression_limit', 'daily_limit', 'session_limit',
                   'skippable_after', 'impressions', 'created_at', 'updated_at')
         read_only_fields = ('approval', 'status', 'impressions', 'created_at', 'updated_at')
@@ -85,9 +87,16 @@ class CampaignSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         start = attrs.get('starts_at', getattr(self.instance, 'starts_at', None))
         end = attrs.get('ends_at', getattr(self.instance, 'ends_at', None))
+        if self.instance and 'advertiser' in attrs and attrs['advertiser'] != self.instance.advertiser and self.instance.creatives.exists():
+            raise serializers.ValidationError({'advertiser': 'Move or archive existing creatives before changing the client.'})
+        if bool(start) != bool(end):
+            raise serializers.ValidationError('Set both campaign dates or leave both unset.')
         if start and end and end <= start:
             raise serializers.ValidationError({'ends_at': 'End must be after start.'})
         return attrs
+
+    def validate_placements(self, value):
+        return placement_codes(value)
 
 
 def media_duration(media):
@@ -109,16 +118,28 @@ class CreativeSerializer(serializers.ModelSerializer):
     ready = serializers.SerializerMethodField()
     media_reference = serializers.CharField(source='media.reference_url', read_only=True, allow_null=True)
     media_state = serializers.CharField(source='media.state', read_only=True, allow_null=True)
-    advertiser = serializers.IntegerField(source='campaign.advertiser_id', read_only=True)
+    effective_destination_url = serializers.SerializerMethodField()
+    destination_source = serializers.SerializerMethodField()
     validate_placements = staticmethod(placement_codes)
     validate_destination_url = staticmethod(safe_destination)
 
     class Meta:
         model = Creative
         fields = ('id', 'name', 'campaign', 'advertiser', 'kind', 'placements', 'approval', 'destination_url',
+                  'effective_destination_url', 'destination_source',
                   'cta', 'image', 'media', 'duration_seconds', 'promoted_content', 'promoted_channel', 'promoted_contents', 'ready',
                   'media_reference', 'media_state', 'created_at', 'updated_at')
         read_only_fields = ('approval', 'duration_seconds', 'created_at', 'updated_at')
+        extra_kwargs = {'advertiser': {'required': False}, 'campaign': {'required': False, 'allow_null': True},
+                        'placements': {'required': False}}
+
+    def get_effective_destination_url(self, obj):
+        from .destinations import effective_destination
+        return effective_destination(obj)[0]
+
+    def get_destination_source(self, obj):
+        from .destinations import effective_destination
+        return effective_destination(obj)[1]
 
     def get_ready(self, obj):
         return creative_ready(obj)
@@ -133,6 +154,16 @@ class CreativeSerializer(serializers.ModelSerializer):
         def field(key):
             return attrs.get(key, getattr(self.instance, key, None))
         campaign, kind, image, media = (field(key) for key in ('campaign', 'kind', 'image', 'media'))
+        advertiser = field('advertiser')
+        if not advertiser and campaign:
+            advertiser = campaign.advertiser
+            attrs['advertiser'] = advertiser
+        if not advertiser:
+            raise serializers.ValidationError({'advertiser': 'Select a client.'})
+        if campaign and campaign.advertiser_id != advertiser.pk:
+            raise serializers.ValidationError({'campaign': 'Campaign belongs to another client.'})
+        if self.instance and advertiser != self.instance.advertiser:
+            raise serializers.ValidationError('A creative cannot be moved to another client.')
         if self.instance and campaign != self.instance.campaign:
             raise serializers.ValidationError('A creative cannot be moved to another campaign.')
         if kind == 'image' and (not image or media) or kind == 'video' and (not media or image):
@@ -159,6 +190,38 @@ class CreativeSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('A sponsored title needs published promoted content.')
         if 'homepage_channel_promotion' in placements and not promoted_channel:
             raise serializers.ValidationError('A sponsored channel needs an active promoted channel.')
+        return attrs
+
+
+class DeliveryAllocationSerializer(serializers.ModelSerializer):
+    starts_at = AwareDateTimeField()
+    ends_at = AwareDateTimeField(required=False, allow_null=True)
+
+    class Meta:
+        model = DeliveryAllocation
+        fields = ('id', 'creative', 'placement', 'starts_at', 'ends_at', 'status', 'priority', 'created_at', 'updated_at')
+        read_only_fields = ('status', 'created_at', 'updated_at')
+
+    def validate(self, attrs):
+        creative = attrs.get('creative', getattr(self.instance, 'creative', None))
+        placement = attrs.get('placement', getattr(self.instance, 'placement', None))
+        start = attrs.get('starts_at', getattr(self.instance, 'starts_at', None))
+        end = attrs.get('ends_at', getattr(self.instance, 'ends_at', None))
+        if self.instance and creative != self.instance.creative:
+            raise serializers.ValidationError('An allocation cannot move to another creative.')
+        if end and start and end <= start:
+            raise serializers.ValidationError({'ends_at': 'End must be after start.'})
+        if creative and placement:
+            if (placement.code in VIDEO_PLACEMENTS) != (creative.kind == 'video'):
+                raise serializers.ValidationError('Placement does not support this creative format.')
+            overlaps = DeliveryAllocation.objects.filter(creative=creative, placement=placement).filter(
+                Q(ends_at__isnull=True) | Q(ends_at__gt=start))
+            if end:
+                overlaps = overlaps.filter(starts_at__lt=end)
+            if self.instance:
+                overlaps = overlaps.exclude(pk=self.instance.pk)
+            if overlaps.exists():
+                raise serializers.ValidationError('This creative already has an overlapping allocation for the placement.')
         return attrs
 
 
