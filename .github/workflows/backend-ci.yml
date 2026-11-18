@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   test:
+    if: github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/fix/railway-experiment-no-migrate'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -52,3 +53,34 @@ jobs:
         run: python manage.py migrate --noinput
       - name: Complete backend suite
         run: python manage.py test --noinput
+
+  ec2_database_readonly:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/railway-experiment-no-migrate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect existing EC2 database and media configuration
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          EC2_APP_DIR: ${{ vars.EC2_APP_DIR }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          passphrase: ${{ secrets.EC2_PASSPHRASE }}
+          envs: EC2_APP_DIR
+          command_timeout: 3m
+          script: |
+            set -eu
+            : "${EC2_APP_DIR:?}"
+            cd "$EC2_APP_DIR"
+            database="$(docker compose -f docker-compose.prod.yml ps -q postgres)"
+            [ -n "$database" ]
+            printf 'postgres_health=%s\n' "$(docker inspect --format '{{.State.Health.Status}}' "$database")"
+            printf 'postgres_published_ports=%s\n' "$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$database")"
+            printf 'postgres_volume=%s\n' "$(docker inspect --format '{{range .Mounts}}{{.Name}}{{end}}' "$database")"
+            docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT count(*) FROM content_content;"'
+            docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT app,max(name) FROM django_migrations GROUP BY app ORDER BY app;"'
+            docker compose -f docker-compose.prod.yml exec -T api python -c 'import os; keys=("AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_STORAGE_BUCKET_NAME","AWS_S3_REGION_NAME","CLOUDFRONT_BASE_URL","PLAYBACK_COOKIE_DOMAIN"); print("\n".join(k+"_configured="+str(bool(os.environ.get(k))) for k in keys))'
+            curl --fail --silent http://127.0.0.1:8000/health/ >/dev/null
+            echo api_health=ok
