@@ -90,6 +90,8 @@ jobs:
             python3 -c 'import socket,sys; connection=socket.socket(); connection.settimeout(3); print("host_to_postgres_tcp="+str(connection.connect_ex((sys.argv[1],5432))==0)); connection.close()' "$database_ip"
             python3 -c 'import os,socket; resolve=lambda host:{item[4][0] for item in socket.getaddrinfo(host,22,type=socket.SOCK_STREAM)}; print("api_dns_matches_ec2_ssh_host="+str(bool(resolve("apicbmtv.cbmgroupco.com") & resolve(os.environ["EC2_HOST"]))))'
             sudo -n sshd -T 2>/dev/null | awk '$1=="allowtcpforwarding" || $1=="permitopen" {print "sshd_" $1 "=" $2}'
+            printf 'ssh_login_user=%s\n' "$(whoami)"
+            sudo -n ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub | awk '{print "ssh_host_fingerprint=" $2}'
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT count(*) FROM content_content;"'
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT current_database();"'
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT app,max(name) FROM django_migrations GROUP BY app ORDER BY app;"'
