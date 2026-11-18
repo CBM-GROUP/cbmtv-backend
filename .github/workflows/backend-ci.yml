@@ -63,12 +63,13 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           EC2_APP_DIR: ${{ vars.EC2_APP_DIR }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           passphrase: ${{ secrets.EC2_PASSPHRASE }}
-          envs: EC2_APP_DIR
+          envs: EC2_APP_DIR,EC2_HOST
           command_timeout: 3m
           script: |
             set -eu
@@ -85,8 +86,12 @@ jobs:
             done
             if sudo -n true >/dev/null 2>&1; then echo sudo_noninteractive=available; else echo sudo_noninteractive=absent; fi
             database_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$database")"
+            printf 'postgres_private_ip=%s\n' "$database_ip"
             python3 -c 'import socket,sys; connection=socket.socket(); connection.settimeout(3); print("host_to_postgres_tcp="+str(connection.connect_ex((sys.argv[1],5432))==0)); connection.close()' "$database_ip"
+            python3 -c 'import os,socket; resolve=lambda host:{item[4][0] for item in socket.getaddrinfo(host,22,type=socket.SOCK_STREAM)}; print("api_dns_matches_ec2_ssh_host="+str(bool(resolve("apicbmtv.cbmgroupco.com") & resolve(os.environ["EC2_HOST"]))))'
+            sudo -n sshd -T 2>/dev/null | awk '$1=="allowtcpforwarding" || $1=="permitopen" {print "sshd_" $1 "=" $2}'
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT count(*) FROM content_content;"'
+            docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT current_database();"'
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT app,max(name) FROM django_migrations GROUP BY app ORDER BY app;"'
             docker compose -f docker-compose.prod.yml exec -T api python -c 'import os; keys=("AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_STORAGE_BUCKET_NAME","AWS_S3_REGION_NAME","CLOUDFRONT_BASE_URL","PLAYBACK_COOKIE_DOMAIN"); print("\n".join(k+"_configured="+str(bool(os.environ.get(k))) for k in keys))'
             curl --fail --silent http://127.0.0.1:8000/health/ >/dev/null
