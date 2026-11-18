@@ -99,3 +99,48 @@ jobs:
             docker compose -f docker-compose.prod.yml exec -T api python -c 'import os; keys=("AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_STORAGE_BUCKET_NAME","AWS_S3_REGION_NAME","CLOUDFRONT_BASE_URL","PLAYBACK_COOKIE_DOMAIN"); print("\n".join(k+"_configured="+str(bool(os.environ.get(k))) for k in keys))'
             curl --fail --silent http://127.0.0.1:8000/health/ >/dev/null
             echo api_health=ok
+      - name: Provision temporary restricted Railway database access
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          EC2_APP_DIR: ${{ vars.EC2_APP_DIR }}
+          RAILWAY_DB_PASSWORD: ${{ secrets.CBMTV_RAILWAY_DB_READONLY_PASSWORD }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          passphrase: ${{ secrets.EC2_PASSPHRASE }}
+          envs: EC2_APP_DIR,RAILWAY_DB_PASSWORD
+          command_timeout: 3m
+          script: |
+            set -eu
+            : "${EC2_APP_DIR:?}"
+            case "$RAILWAY_DB_PASSWORD" in
+              ''|*[!A-Za-z0-9_-]*) echo 'Temporary password is unavailable or malformed.' >&2; exit 1 ;;
+            esac
+            cd "$EC2_APP_DIR"
+            database="$(docker compose -f docker-compose.prod.yml ps -q postgres)"
+            [ -n "$database" ]
+            database_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$database")"
+            [ "$database_ip" = '172.19.0.2' ] || { echo 'PostgreSQL private address changed; stop before provisioning.' >&2; exit 1; }
+
+            role_exists="$(printf '%s\n' "SELECT count(*) FROM pg_roles WHERE rolname='cbmtv_railway_readonly';" | docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At')"
+            if [ "$role_exists" = '0' ]; then
+              printf '%s\n' 'CREATE ROLE cbmtv_railway_readonly LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;' | docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At'
+            fi
+            printf "ALTER ROLE cbmtv_railway_readonly WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '%s';\nGRANT CONNECT ON DATABASE cbmtv TO cbmtv_railway_readonly;\nGRANT USAGE ON SCHEMA public TO cbmtv_railway_readonly;\nGRANT SELECT ON ALL TABLES IN SCHEMA public TO cbmtv_railway_readonly;\nALTER ROLE cbmtv_railway_readonly SET default_transaction_read_only = on;\n" "$RAILWAY_DB_PASSWORD" | docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At'
+            echo read_only_role=ready
+
+            if ! id -u cbmtv_railway_tunnel >/dev/null 2>&1; then
+              sudo -n useradd --create-home --user-group --shell /bin/sh cbmtv_railway_tunnel
+            fi
+            sudo -n install -d -m 700 -o cbmtv_railway_tunnel -g cbmtv_railway_tunnel /home/cbmtv_railway_tunnel/.ssh
+            authorized_keys=/home/cbmtv_railway_tunnel/.ssh/authorized_keys
+            if [ ! -f "$authorized_keys" ]; then
+              sudo -n install -m 600 -o cbmtv_railway_tunnel -g cbmtv_railway_tunnel /dev/null "$authorized_keys"
+            fi
+            if ! sudo -n grep -Fq cbmtv-railway-readonly-20261118 "$authorized_keys"; then
+              printf '%s\n' 'command="/bin/false",restrict,port-forwarding,permitopen="172.19.0.2:5432" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAULAHtZlKi1ekeut1SrKLL0Wp7LdFNFzJWv2iNbYEu cbmtv-railway-readonly-20261118' | sudo -n tee -a "$authorized_keys" >/dev/null
+            fi
+            sudo -n chown cbmtv_railway_tunnel:cbmtv_railway_tunnel "$authorized_keys"
+            sudo -n chmod 600 "$authorized_keys"
+            echo restricted_ssh_key=ready

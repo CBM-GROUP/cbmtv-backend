@@ -11,7 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y curl libpq5 ffmpeg \
+    && apt-get install --no-install-recommends -y curl libpq5 ffmpeg openssh-client \
     && rm -rf /var/lib/apt/lists/* \
     && addgroup --system django \
     && adduser --system --ingroup django django
