@@ -115,18 +115,22 @@ def creative_ready(creative):
 
 
 class CreativeSerializer(serializers.ModelSerializer):
+    advertiser_name = serializers.CharField(source='advertiser.name', read_only=True)
+    campaign_name = serializers.CharField(source='campaign.name', read_only=True, allow_null=True)
     ready = serializers.SerializerMethodField()
     media_reference = serializers.CharField(source='media.reference_url', read_only=True, allow_null=True)
     media_state = serializers.CharField(source='media.state', read_only=True, allow_null=True)
     effective_destination_url = serializers.SerializerMethodField()
     destination_source = serializers.SerializerMethodField()
+    allocation_count = serializers.IntegerField(read_only=True, default=0)
+    allocation_statuses = serializers.SerializerMethodField()
     validate_placements = staticmethod(placement_codes)
     validate_destination_url = staticmethod(safe_destination)
 
     class Meta:
         model = Creative
-        fields = ('id', 'name', 'campaign', 'advertiser', 'kind', 'placements', 'approval', 'destination_url',
-                  'effective_destination_url', 'destination_source',
+        fields = ('id', 'name', 'campaign', 'campaign_name', 'advertiser', 'advertiser_name', 'kind', 'placements', 'approval', 'destination_url',
+                  'effective_destination_url', 'destination_source', 'allocation_count', 'allocation_statuses',
                   'cta', 'image', 'media', 'duration_seconds', 'promoted_content', 'promoted_channel', 'promoted_contents', 'ready',
                   'media_reference', 'media_state', 'created_at', 'updated_at')
         read_only_fields = ('approval', 'duration_seconds', 'created_at', 'updated_at')
@@ -140,6 +144,9 @@ class CreativeSerializer(serializers.ModelSerializer):
     def get_destination_source(self, obj):
         from .destinations import effective_destination
         return effective_destination(obj)[1]
+
+    def get_allocation_statuses(self, obj):
+        return {state: getattr(obj, f'allocation_{state}_count', 0) for state in ('paused', 'active', 'completed')}
 
     def get_ready(self, obj):
         return creative_ready(obj)
@@ -196,11 +203,18 @@ class CreativeSerializer(serializers.ModelSerializer):
 class DeliveryAllocationSerializer(serializers.ModelSerializer):
     starts_at = AwareDateTimeField()
     ends_at = AwareDateTimeField(required=False, allow_null=True)
+    eligibility = serializers.SerializerMethodField()
+
+    def get_eligibility(self, allocation):
+        from .delivery import allocation_blockers
+        reasons = allocation_blockers(allocation)
+        return {'eligible': not reasons, 'reasons': reasons}
 
     class Meta:
         model = DeliveryAllocation
-        fields = ('id', 'creative', 'placement', 'starts_at', 'ends_at', 'status', 'priority', 'created_at', 'updated_at')
-        read_only_fields = ('status', 'created_at', 'updated_at')
+        fields = ('id', 'creative', 'placement', 'starts_at', 'ends_at', 'status', 'priority', 'daily_limit', 'impression_limit', 'impressions', 'eligibility', 'created_at', 'updated_at')
+        read_only_fields = ('status', 'impressions', 'eligibility', 'created_at', 'updated_at')
+        extra_kwargs = {'daily_limit': {'min_value': 1}, 'impression_limit': {'min_value': 1}}
 
     def validate(self, attrs):
         creative = attrs.get('creative', getattr(self.instance, 'creative', None))
@@ -228,8 +242,23 @@ class DeliveryAllocationSerializer(serializers.ModelSerializer):
 class PlacementSerializer(serializers.ModelSerializer):
     class Meta:
         model = Placement
-        fields = ('code', 'enabled', 'breakpoints', 'failure_policy')
+        fields = ('code', 'enabled', 'breakpoints', 'skippable_after', 'max_video_duration', 'max_midroll_interruptions', 'failure_policy')
         read_only_fields = ('code',)
+        extra_kwargs = {'skippable_after': {'min_value': 0, 'max_value': 300},
+                        'max_video_duration': {'min_value': 1, 'max_value': 300},
+                        'max_midroll_interruptions': {'min_value': 0, 'max_value': 2}}
+
+    def validate(self, attrs):
+        code = self.instance.code
+        if code not in VIDEO_PLACEMENTS and set(attrs) & {'skippable_after', 'max_video_duration', 'max_midroll_interruptions'}:
+            raise serializers.ValidationError('Video playback settings apply only to video placements.')
+        if code != 'midroll' and 'max_midroll_interruptions' in attrs:
+            raise serializers.ValidationError('Mid-roll interruption limits apply only to mid-roll.')
+        delay = attrs.get('skippable_after', self.instance.skippable_after)
+        maximum = attrs.get('max_video_duration', self.instance.max_video_duration)
+        if delay is not None and delay > maximum:
+            raise serializers.ValidationError('Skip delay cannot exceed maximum video duration.')
+        return attrs
 
     def validate_breakpoints(self, value):
         if not isinstance(value, list) or len(value) > 3 or any(type(n) is not int or n < 60 or n > 86400 for n in value) or value != sorted(set(value)):

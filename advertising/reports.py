@@ -4,7 +4,7 @@ from django.db.models.functions import TruncDate
 from django.db.models.functions import Coalesce
 from django.utils import timezone as clock
 from rest_framework import serializers
-from .constants import EVENTS
+from .constants import EVENTS, PLACEMENTS
 from .models import Event, Campaign, Decision, AdRequest
 
 
@@ -14,6 +14,7 @@ def counts():
 
 def rates(row):
     row['completion_rate'] = round(row['complete'] / row['video_start'], 4) if row['video_start'] else None
+    row['skip_rate'] = round(row['skip'] / row['video_start'], 4) if row['video_start'] else None
     row['click_through_rate'] = round(row['click'] / row['impression'], 4) if row['impression'] else None
     return row
 
@@ -28,11 +29,13 @@ def report(params):
     after = datetime.combine(start, time.min, tzinfo=timezone.utc)
     before = datetime.combine(end + timedelta(days=1), time.min, tzinfo=timezone.utc)
     filters = {}
-    for key in ('campaign', 'advertiser', 'creative'):
+    for key in ('campaign', 'advertiser', 'creative', 'allocation', 'placement', 'kind'):
         if params.get(key):
-            value = serializers.IntegerField(min_value=1).run_validation(params[key])
+            value = (serializers.ChoiceField(choices=tuple(PLACEMENTS) if key == 'placement' else ('image', 'video'))
+                     if key in ('placement', 'kind') else serializers.IntegerField(min_value=1)).run_validation(params[key])
             filters[{'campaign': 'decision__campaign_id', 'advertiser': 'decision__creative__advertiser_id',
-                     'creative': 'decision__creative_id'}[key]] = value
+                     'creative': 'decision__creative_id', 'allocation': 'decision__allocation_id', 'placement': 'decision__placement_id',
+                     'kind': 'decision__creative__kind'}[key]] = value
     events = Event.objects.filter(created_at__gte=after, created_at__lt=before, **filters)
     summary = rates(events.aggregate(**counts()))
     decision_filters = {key.removeprefix('decision__'): value for key, value in filters.items()}
@@ -52,7 +55,11 @@ def report(params):
         campaigns = campaigns.filter(creatives__pk=params['creative'])
     return {'from': start, 'to': end, 'summary': summary,
             'by_campaign': grouped('decision__campaign_id', 'decision__campaign__name'),
-            'by_creative': grouped('decision__creative_id', 'decision__creative__name', 'decision__creative__kind', 'decision__campaign_id', 'decision__campaign__name'),
+            'by_creative': grouped('decision__creative_id', 'decision__creative__name', 'decision__creative__kind',
+                                   'decision__creative__advertiser_id', 'decision__creative__advertiser__name',
+                                   'decision__campaign_id', 'decision__campaign__name', 'decision__allocation_id'),
+            'by_allocation': grouped('decision__allocation_id', 'decision__placement_id',
+                                     'decision__creative_id', 'decision__creative__advertiser_id'),
             'by_advertiser': grouped('decision__creative__advertiser_id', 'decision__creative__advertiser__name'),
             'by_placement': grouped('decision__placement_id'),
             'by_date': [rates(row) for row in events.annotate(day=TruncDate('created_at', tzinfo=timezone.utc)).values('day').annotate(**counts()).order_by('day')],

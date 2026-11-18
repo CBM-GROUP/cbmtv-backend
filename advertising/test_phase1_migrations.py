@@ -16,7 +16,7 @@ class CreativeOwnershipMigrationTests(TransactionTestCase):
         return executor.loader.project_state([('advertising', target)]).apps
 
     def tearDown(self):
-        self.migrate('0007_deliveryallocation_ad_allocation_unique_start')
+        self.migrate('0011_decision_playback_policy')
         super().tearDown()
 
     def test_backfill_preserves_existing_creative_identifier(self):

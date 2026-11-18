@@ -3,6 +3,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models import Q, F
 from .constants import APPROVALS, EVENTS, PLACEMENTS
+from .playback_policy import DEFAULT_SKIP_SECONDS, DEFAULT_MAX_VIDEO_DURATION, DEFAULT_MAX_MIDROLL_INTERRUPTION
 
 
 class Timestamped(models.Model):
@@ -21,6 +22,7 @@ class Advertiser(Timestamped):
     billing_reference = models.CharField(max_length=200, blank=True)
     active = models.BooleanField(default=True)
     default_destination_url = models.URLField(max_length=1000, blank=True)
+    allocation_last_served_at = models.DateTimeField(null=True, blank=True, editable=False)
 
 
 class Placement(Timestamped):
@@ -28,6 +30,9 @@ class Placement(Timestamped):
     enabled = models.BooleanField(default=False)
     # Mid-rolls are elapsed main-content seconds, shared by eligible titles.
     breakpoints = models.JSONField(default=list, blank=True)
+    skippable_after = models.PositiveSmallIntegerField(null=True, blank=True, default=DEFAULT_SKIP_SECONDS)
+    max_video_duration = models.PositiveSmallIntegerField(default=DEFAULT_MAX_VIDEO_DURATION)
+    max_midroll_interruptions = models.PositiveSmallIntegerField(default=DEFAULT_MAX_MIDROLL_INTERRUPTION)
     failure_policy = models.CharField(max_length=16, default='continue', choices=[('continue', 'Continue content')])
 
 
@@ -91,19 +96,38 @@ class Creative(Timestamped):
 
 
 class DeliveryAllocation(Timestamped):
-    """Configured inventory only; the existing campaign decision engine remains authoritative."""
+    """Optional serving inventory; the legacy campaign selector remains available."""
     creative = models.ForeignKey(Creative, on_delete=models.PROTECT, related_name='allocations')
     placement = models.ForeignKey(Placement, on_delete=models.PROTECT)
     starts_at = models.DateTimeField()
     ends_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=16, default='paused', choices=[(s, s) for s in ('paused', 'active', 'completed')])
     priority = models.PositiveSmallIntegerField(default=1)
+    daily_limit = models.PositiveIntegerField(null=True, blank=True, default=100)
+    impression_limit = models.PositiveBigIntegerField(null=True, blank=True, default=10000)
+    impressions = models.PositiveBigIntegerField(default=0, editable=False)
+    last_served_at = models.DateTimeField(null=True, blank=True, editable=False)
+    selection_score = models.FloatField(default=0, editable=False)
 
     class Meta:
+        indexes = [models.Index(fields=['status', 'placement', 'starts_at', 'ends_at'], name='ad_alloc_eligibility')]
         constraints = [
             models.CheckConstraint(condition=Q(ends_at__isnull=True) | Q(ends_at__gt=F('starts_at')), name='ad_allocation_schedule'),
             models.UniqueConstraint(fields=['creative', 'placement', 'starts_at'], name='ad_allocation_unique_start'),
         ]
+
+
+class CreativeCreateRequest(models.Model):
+    """One authenticated administrator's result for one creative-create request key."""
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    key = models.CharField(max_length=128)
+    payload_sha256 = models.CharField(max_length=64)
+    creative = models.ForeignKey(Creative, on_delete=models.PROTECT, null=True)
+    response = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['actor', 'key'], name='ad_creative_create_once')]
 
 
 class AdvertisingOperation(models.Model):
@@ -129,7 +153,9 @@ class Decision(models.Model):
     placement = models.ForeignKey(Placement, on_delete=models.PROTECT)
     break_key = models.CharField(max_length=32)
     campaign = models.ForeignKey(Campaign, null=True, on_delete=models.PROTECT)
+    allocation = models.ForeignKey(DeliveryAllocation, null=True, on_delete=models.PROTECT)
     creative = models.ForeignKey(Creative, null=True, on_delete=models.PROTECT)
+    playback_policy = models.JSONField(default=dict, blank=True)
     reason = models.CharField(max_length=32, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField(db_index=True)
@@ -139,7 +165,8 @@ class Decision(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['session', 'placement', 'break_key'], name='ad_break_once')]
-        indexes = [models.Index(fields=['campaign', 'impression_at', 'expires_at'], name='ad_reservations')]
+        indexes = [models.Index(fields=['campaign', 'impression_at', 'expires_at'], name='ad_reservations'),
+                   models.Index(fields=['allocation', 'impression_at', 'expires_at'], name='ad_alloc_reservations')]
 
 
 class CampaignDay(models.Model):
@@ -149,6 +176,15 @@ class CampaignDay(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['campaign', 'day'], name='ad_campaign_day')]
+
+
+class AllocationDay(models.Model):
+    allocation = models.ForeignKey(DeliveryAllocation, on_delete=models.CASCADE)
+    day = models.DateField()
+    impressions = models.PositiveBigIntegerField(default=0)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['allocation', 'day'], name='ad_allocation_day')]
 
 
 class AdRequest(models.Model):

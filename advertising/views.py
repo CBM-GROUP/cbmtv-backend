@@ -1,11 +1,15 @@
+import hashlib
+import json
 import math
+import re
 from django.conf import settings
 from django.db import transaction, models
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import permissions, viewsets, serializers
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError, PermissionDenied
+from rest_framework.exceptions import APIException, ValidationError, PermissionDenied
+from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
@@ -20,8 +24,8 @@ from content.publication import public_eligibility
 from content.taxonomy import CATEGORY_CHOICES
 from channel.models import Channel
 from homepage.models import HomepageConfiguration
-from .constants import PLACEMENTS
-from .models import Advertiser, Campaign, Creative, Placement, Audit, Decision, DeliveryAllocation, AdvertisingOperation
+from .constants import APPROVALS, PLACEMENTS
+from .models import Advertiser, Campaign, Creative, Placement, Audit, Decision, DeliveryAllocation, AdvertisingOperation, CreativeCreateRequest
 from .serializers import AdvertiserSerializer, CampaignSerializer, CreativeSerializer, PlacementSerializer, DeliveryAllocationSerializer, creative_ready, media_duration
 from .delivery import context_session, receipt, authorized_session, decide, ingest, identifier, placement_allowed, advertising_available
 from .media import upload_image, StorageUnavailable
@@ -50,6 +54,29 @@ class AdAnonThrottle(AnonRateThrottle):
 class AdUserThrottle(UserRateThrottle):
     rate = '240/min'
     get_ident = TrustedProxyRateThrottle.get_ident
+
+
+class IdempotencyConflict(APIException):
+    status_code = 409
+    default_detail = 'This idempotency key was used with another creative payload.'
+
+
+def positive_filter(params, name):
+    if name not in params:
+        return None
+    return serializers.IntegerField(min_value=1).run_validation(params[name])
+
+
+def choice_filter(params, name, choices):
+    if name not in params:
+        return None
+    return serializers.ChoiceField(choices=choices).run_validation(params[name])
+
+
+def search_filter(params):
+    if 'q' not in params:
+        return ''
+    return serializers.CharField(max_length=100, allow_blank=False, trim_whitespace=True).run_validation(params['q'])
 
 
 class StaffViewSet(PrivateResponseMixin, viewsets.ModelViewSet):
@@ -102,6 +129,17 @@ class AdvertiserViewSet(StaffViewSet):
     resource_permission = 'advertising_manage_clients'
     queryset = Advertiser.objects.order_by('-pk')
     serializer_class = AdvertiserSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        query = search_filter(self.request.query_params)
+        if query:
+            queryset = queryset.filter(models.Q(name__icontains=query) | models.Q(contact_name__icontains=query)
+                                       | models.Q(email__icontains=query))
+        active = choice_filter(self.request.query_params, 'active', ('true', 'false'))
+        if active is not None:
+            queryset = queryset.filter(active=active == 'true')
+        return queryset
 
 
 class WorkflowViewSet(StaffViewSet):
@@ -165,9 +203,17 @@ class CampaignViewSet(WorkflowViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        if self.request.query_params.get('advertiser'):
-            value = serializers.IntegerField(min_value=1).run_validation(self.request.query_params['advertiser'])
+        value = positive_filter(self.request.query_params, 'advertiser')
+        if value is not None:
             queryset = queryset.filter(advertiser_id=value)
+        query = search_filter(self.request.query_params)
+        if query:
+            queryset = queryset.filter(name__icontains=query)
+        for field, choices in (('status', ('paused', 'active', 'completed')),
+                               ('approval', tuple(value for value, _ in APPROVALS))):
+            value = choice_filter(self.request.query_params, field, choices)
+            if value is not None:
+                queryset = queryset.filter(**{field: value})
         return queryset
 
 
@@ -176,14 +222,58 @@ class CreativeViewSet(WorkflowViewSet):
     queryset = Creative.objects.select_related('advertiser', 'campaign', 'campaign__advertiser', 'media', 'image').order_by('-pk')
     serializer_class = CreativeSerializer
 
+    def create(self, request, *args, **kwargs):
+        key = request.headers.get('Idempotency-Key')
+        if key is None:
+            return super().create(request, *args, **kwargs)
+        if not re.fullmatch(r'[A-Za-z0-9_-]{16,128}', key):
+            raise ValidationError({'idempotency_key': 'Use 16–128 letters, digits, hyphens or underscores.'})
+        if not isinstance(request.data, dict):
+            raise ValidationError('Provide a creative object.')
+        digest = hashlib.sha256(json.dumps(request.data, sort_keys=True, separators=(',', ':'), default=str).encode()).hexdigest()
+        with transaction.atomic():
+            reservation, created = CreativeCreateRequest.objects.select_for_update().get_or_create(
+                actor=request.user, key=key, defaults={'payload_sha256': digest})
+            if not created:
+                if reservation.payload_sha256 != digest:
+                    raise IdempotencyConflict()
+                return Response(reservation.response, status=201, headers={'Idempotent-Replay': 'true'})
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            reservation.creative = serializer.instance
+            reservation.response = json.loads(JSONRenderer().render(serializer.data))
+            reservation.save(update_fields=['creative', 'response'])
+            return Response(reservation.response, status=201)
+
     def get_queryset(self):
         queryset = super().get_queryset()
-        if self.request.query_params.get('campaign'):
-            value = serializers.IntegerField(min_value=1).run_validation(self.request.query_params['campaign'])
+        # Aggregate only on reads: PostgreSQL cannot SELECT FOR UPDATE on a GROUP BY
+        # query, and workflow/preview/update lock creative rows before changing them.
+        if self.request.method in ('GET', 'HEAD'):
+            queryset = queryset.annotate(
+                allocation_count=models.Count('allocations'),
+                allocation_paused_count=models.Count('allocations', filter=models.Q(allocations__status='paused')),
+                allocation_active_count=models.Count('allocations', filter=models.Q(allocations__status='active')),
+                allocation_completed_count=models.Count('allocations', filter=models.Q(allocations__status='completed')),
+            )
+        value = positive_filter(self.request.query_params, 'campaign')
+        if value is not None:
             queryset = queryset.filter(campaign_id=value)
-        if self.request.query_params.get('advertiser'):
-            value = serializers.IntegerField(min_value=1).run_validation(self.request.query_params['advertiser'])
+        value = positive_filter(self.request.query_params, 'advertiser')
+        if value is not None:
             queryset = queryset.filter(advertiser_id=value)
+        query = search_filter(self.request.query_params)
+        if query:
+            queryset = queryset.filter(name__icontains=query)
+        for field, choices in (('kind', ('image', 'video')),
+                               ('approval', tuple(value for value, _ in APPROVALS))):
+            value = choice_filter(self.request.query_params, field, choices)
+            if value is not None:
+                queryset = queryset.filter(**{field: value})
+        direct = choice_filter(self.request.query_params, 'direct', ('true', 'false'))
+        if direct is not None:
+            queryset = queryset.filter(campaign__isnull=direct == 'true')
         return queryset
 
     @action(detail=True, methods=['post'])
@@ -216,7 +306,8 @@ class PlacementViewSet(StaffViewSet):
 
 class DeliveryAllocationViewSet(StaffViewSet):
     resource_permission = 'advertising_manage_delivery'
-    queryset = DeliveryAllocation.objects.select_related('creative', 'creative__campaign', 'placement').order_by('-pk')
+    queryset = DeliveryAllocation.objects.select_related('creative', 'creative__advertiser', 'creative__campaign',
+        'creative__media', 'creative__image', 'placement').order_by('-pk')
     serializer_class = DeliveryAllocationSerializer
 
     @transaction.atomic
@@ -235,9 +326,22 @@ class DeliveryAllocationViewSet(StaffViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        if self.request.query_params.get('creative'):
-            value = serializers.IntegerField(min_value=1).run_validation(self.request.query_params['creative'])
+        value = positive_filter(self.request.query_params, 'creative')
+        if value is not None:
             queryset = queryset.filter(creative_id=value)
+        value = positive_filter(self.request.query_params, 'advertiser')
+        if value is not None:
+            queryset = queryset.filter(creative__advertiser_id=value)
+        value = positive_filter(self.request.query_params, 'campaign')
+        if value is not None:
+            queryset = queryset.filter(creative__campaign_id=value)
+        for field, choices in (('placement', tuple(PLACEMENTS)), ('status', ('paused', 'active', 'completed'))):
+            value = choice_filter(self.request.query_params, field, choices)
+            if value is not None:
+                queryset = queryset.filter(**{field: value})
+        query = search_filter(self.request.query_params)
+        if query:
+            queryset = queryset.filter(creative__name__icontains=query)
         return queryset
 
     @action(detail=True, methods=['post'])
@@ -259,6 +363,10 @@ class DeliveryAllocationViewSet(StaffViewSet):
                     raise ValidationError('Approve the campaign and include this placement before activation.')
                 if allocation.ends_at and allocation.ends_at <= timezone.now():
                     raise ValidationError('The allocation has expired.')
+                if allocation.status != 'active':
+                    floor = (DeliveryAllocation.objects.filter(status='active', creative__advertiser_id=allocation.creative.advertiser_id)
+                        .exclude(pk=allocation.pk).order_by('selection_score').values_list('selection_score', flat=True).first())
+                    allocation.selection_score = floor if floor is not None else 0
                 allocation.status = 'active'
             elif operation == 'pause':
                 allocation.status = 'paused'
@@ -266,7 +374,7 @@ class DeliveryAllocationViewSet(StaffViewSet):
                 allocation.status = 'completed'
             else:
                 raise ValidationError('This workflow transition is unavailable.')
-            allocation.save(update_fields=['status', 'updated_at'])
+            allocation.save(update_fields=['status', 'selection_score', 'updated_at'])
             self.audit(allocation, operation)
         return Response(self.get_serializer(allocation).data)
 
@@ -279,7 +387,9 @@ class AdvertisingOperationView(PrivateResponseMixin, APIView):
         operation = AdvertisingOperation.objects.filter(pk=1).first()
         return Response({'backend_enabled': settings.ADVERTISING_ENABLED,
                          'operational_enabled': operation.enabled if operation else True,
-                         'effective_enabled': advertising_available()})
+                         'effective_enabled': advertising_available(),
+                         'allocation_strategy_enabled': bool(getattr(settings, 'ADVERTISING_ALLOCATION_DELIVERY_ENABLED', False)),
+                         'strategy': 'allocation' if getattr(settings, 'ADVERTISING_ALLOCATION_DELIVERY_ENABLED', False) else 'campaign'})
 
     def patch(self, request):
         if 'advertising_settings' not in dashboard_permissions(request.user):
@@ -327,7 +437,8 @@ class SessionView(PublicAdView):
             return Response({'enabled': False, 'session': None, 'placements': []})
         session = context_session(request.data, request.user)
         placements = Placement.objects.filter(enabled=True)
-        rows = [{'code': p.code, 'breakpoints': p.breakpoints} for p in placements
+        rows = [{'code': p.code, 'breakpoints': p.breakpoints,
+                 'max_midroll_interruptions': p.max_midroll_interruptions if p.code == 'midroll' else None} for p in placements
                 if (placement_allowed(session, p, str(p.breakpoints[0]) if p.code == 'midroll' and p.breakpoints else 'once')
                     or session.context == 'homepage' and p.code == 'homepage_featured_sponsor'
                     and placement_allowed(session, p, 'featured-' + str((HomepageConfiguration.objects.filter(pk=1).first() or HomepageConfiguration()).advert_interval)))]
