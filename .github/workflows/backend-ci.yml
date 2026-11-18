@@ -79,6 +79,10 @@ jobs:
             printf 'postgres_health=%s\n' "$(docker inspect --format '{{.State.Health.Status}}' "$database")"
             printf 'postgres_published_ports=%s\n' "$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$database")"
             printf 'postgres_volume=%s\n' "$(docker inspect --format '{{range .Mounts}}{{.Name}}{{end}}' "$database")"
+            printf 'postgres_networks=%s\n' "$(docker inspect --format '{{range $name, $network := .NetworkSettings.Networks}}{{$name}} {{end}}' "$database")"
+            for tool in socat tailscale cloudflared ssh sshd; do
+              if command -v "$tool" >/dev/null 2>&1; then echo "$tool=available"; else echo "$tool=absent"; fi
+            done
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT count(*) FROM content_content;"'
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT app,max(name) FROM django_migrations GROUP BY app ORDER BY app;"'
             docker compose -f docker-compose.prod.yml exec -T api python -c 'import os; keys=("AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_STORAGE_BUCKET_NAME","AWS_S3_REGION_NAME","CLOUDFRONT_BASE_URL","PLAYBACK_COOKIE_DOMAIN"); print("\n".join(k+"_configured="+str(bool(os.environ.get(k))) for k in keys))'
