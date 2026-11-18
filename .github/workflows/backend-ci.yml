@@ -83,6 +83,9 @@ jobs:
             for tool in socat tailscale cloudflared ssh sshd; do
               if command -v "$tool" >/dev/null 2>&1; then echo "$tool=available"; else echo "$tool=absent"; fi
             done
+            if sudo -n true >/dev/null 2>&1; then echo sudo_noninteractive=available; else echo sudo_noninteractive=absent; fi
+            database_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$database")"
+            python3 -c 'import socket,sys; connection=socket.socket(); connection.settimeout(3); print("host_to_postgres_tcp="+str(connection.connect_ex((sys.argv[1],5432))==0)); connection.close()' "$database_ip"
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT count(*) FROM content_content;"'
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT app,max(name) FROM django_migrations GROUP BY app ORDER BY app;"'
             docker compose -f docker-compose.prod.yml exec -T api python -c 'import os; keys=("AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_STORAGE_BUCKET_NAME","AWS_S3_REGION_NAME","CLOUDFRONT_BASE_URL","PLAYBACK_COOKIE_DOMAIN"); print("\n".join(k+"_configured="+str(bool(os.environ.get(k))) for k in keys))'
