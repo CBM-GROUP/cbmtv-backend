@@ -1,7 +1,7 @@
 from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
-from advertising.models import Decision, AdSession, CampaignDay, Audit
+from advertising.models import Decision, AdSession, CampaignDay, AllocationDay, Audit
 
 
 class Command(BaseCommand):
@@ -13,7 +13,8 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         cutoff = timezone.now() - timedelta(days=90)
         groups = [Decision.objects.filter(created_at__lt=cutoff), AdSession.objects.filter(created_at__lt=cutoff),
-                  CampaignDay.objects.filter(day__lt=cutoff.date()), Audit.objects.filter(created_at__lt=timezone.now() - timedelta(days=365))]
+                  CampaignDay.objects.filter(day__lt=cutoff.date()), AllocationDay.objects.filter(day__lt=cutoff.date()),
+                  Audit.objects.filter(created_at__lt=timezone.now() - timedelta(days=365))]
         for rows in groups:
             count = rows.count()
             if options['apply']:
