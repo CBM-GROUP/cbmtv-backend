@@ -12,6 +12,22 @@ if [ "${RAILWAY_DB_TUNNEL_ENABLED:-false}" = "true" ]; then
     mkdir -p /tmp/railway-db-tunnel
     printf '%s' "$RAILWAY_DB_SSH_KEY_B64" | base64 -d > /tmp/railway-db-tunnel/key
     chmod 600 /tmp/railway-db-tunnel/key
+    if [ "${RAILWAY_DB_TUNNEL_DIAGNOSTIC:-false}" = "true" ]; then
+        python - <<'PY'
+import socket
+
+for label, host, port in (
+    ('github_ssh_22', 'github.com', 22),
+    ('github_ssh_443', 'ssh.github.com', 443),
+    ('ec2_ssh_22', 'apicbmtv.cbmgroupco.com', 22),
+):
+    try:
+        with socket.create_connection((host, port), timeout=5):
+            print(f'{label}=connected', flush=True)
+    except OSError:
+        print(f'{label}=unreachable', flush=True)
+PY
+    fi
     ssh -N -T \
         -i /tmp/railway-db-tunnel/key \
         -o BatchMode=yes \
