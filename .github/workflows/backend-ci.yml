@@ -93,6 +93,7 @@ jobs:
             printf 'ssh_login_user=%s\n' "$(whoami)"
             sudo -n ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub | awk '{print "ssh_host_fingerprint=" $2}'
             sudo -n cat /etc/ssh/ssh_host_ed25519_key.pub
+            sudo -n ss -lntp | grep sshd | sed -E 's/users:\(.*\)//' || true
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT count(*) FROM content_content;"'
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT current_database();"'
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT app,max(name) FROM django_migrations GROUP BY app ORDER BY app;"'
