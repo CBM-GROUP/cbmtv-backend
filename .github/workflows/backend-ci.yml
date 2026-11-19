@@ -94,6 +94,12 @@ jobs:
             sudo -n ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub | awk '{print "ssh_host_fingerprint=" $2}'
             sudo -n cat /etc/ssh/ssh_host_ed25519_key.pub
             sudo -n ss -lntp | grep sshd | sed -E 's/users:\(.*\)//' || true
+            if command -v aws >/dev/null 2>&1; then
+              echo aws_cli=available
+              if aws sts get-caller-identity >/dev/null 2>&1; then echo aws_identity=available; else echo aws_identity=absent; fi
+            else
+              echo aws_cli=absent
+            fi
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT count(*) FROM content_content;"'
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT current_database();"'
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT app,max(name) FROM django_migrations GROUP BY app ORDER BY app;"'
