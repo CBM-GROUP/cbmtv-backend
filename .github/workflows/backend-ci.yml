@@ -100,6 +100,14 @@ jobs:
             else
               echo aws_cli=absent
             fi
+            metadata_token="$(curl --silent --max-time 2 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token || true)"
+            if [ -n "$metadata_token" ]; then
+              role_names="$(curl --silent --max-time 2 -H "X-aws-ec2-metadata-token: $metadata_token" http://169.254.169.254/latest/meta-data/iam/security-credentials/ || true)"
+              if [ -n "$role_names" ] && ! printf '%s' "$role_names" | grep -qi '^<html'; then echo ec2_instance_role=available; else echo ec2_instance_role=absent; fi
+            else
+              echo ec2_metadata=unavailable
+            fi
+            if sudo -n ss -lntp '( sport = :443 )' | grep -q LISTEN; then echo ec2_443_listener=present; else echo ec2_443_listener=absent; fi
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT count(*) FROM content_content;"'
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT current_database();"'
             docker compose -f docker-compose.prod.yml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT app,max(name) FROM django_migrations GROUP BY app ORDER BY app;"'
